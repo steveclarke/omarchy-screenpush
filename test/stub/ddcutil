@@ -26,6 +26,10 @@ if [ "${1:-}" = "detect" ]; then
     serial=$(basename "$f")
     printf 'Display %s\n   Serial number: %s\n   Model: STUB MONITOR\n' "$serial" "$serial"
   done
+  # Raw blocks appended verbatim, for shapes a state file cannot express:
+  # a panel that reports no serial at all, and two panels reporting the same
+  # one. Both are real hardware behaviours and both used to corrupt the desk.
+  [ -z "${STUB_EXTRA_DETECT:-}" ] || [ ! -f "$STUB_EXTRA_DETECT" ] || cat "$STUB_EXTRA_DETECT"
   exit 0
 fi
 

@@ -335,3 +335,41 @@ JSON
   [ "$(cat "$STUB_STATE/AAA0001")" = "0x11" ]
   [ "$(cat "$STUB_STATE/BBB0002")" = "0x0f" ]
 }
+
+@test "a monitor reporting no serial is ignored, not turned into a phantom" {
+  # ddcutil prints the field with an empty value for panels that report no
+  # serial. Taking $NF off that line yields the literal "number:", which used
+  # to join the desk key, add a row to the setup grid, and fail every lookup.
+  export STUB_EXTRA_DETECT="$BATS_TEST_TMPDIR/extra"
+  printf 'Display 9\n   Serial number:\n   Model: NO SERIAL PANEL\n' > "$STUB_EXTRA_DETECT"
+
+  run "$ENGINE" state
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.deskKey == "AAA0001+BBB0002"'
+  [[ "$output" != *"number:"* ]]
+
+  run "$ENGINE" detect
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.monitors | length == 2'
+}
+
+@test "two monitors reporting the same serial are refused before anything moves" {
+  save_office_desk
+  export STUB_EXTRA_DETECT="$BATS_TEST_TMPDIR/extra"
+  printf 'Display 9\n   Serial number: AAA0001\n   Model: CLONE\n' > "$STUB_EXTRA_DETECT"
+
+  run "$ENGINE" switch mac
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"same serial"* ]]
+  # Nothing moved: both panels are still on the input they started on.
+  [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]
+  [ "$(cat "$STUB_STATE/BBB0002")" = "0x0f" ]
+}
+
+@test "switch --monitor with no serial prints usage, not a bash error" {
+  save_office_desk
+  run "$ENGINE" switch mac --monitor
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"usage:"* ]]
+  [[ "$output" != *"unbound variable"* ]]
+}

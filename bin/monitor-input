@@ -47,8 +47,8 @@ main() {
   case "$cmd" in
     detect) cmd_detect ;;
     state)  cmd_state ;;
-    switch) cmd_switch "$@" ;;
-    switch-raw) cmd_switch_raw "$@" ;;
+    switch) with_switch_lock cmd_switch "$@" ;;
+    switch-raw) with_switch_lock cmd_switch_raw "$@" ;;
     reachable) cmd_reachable "$@" ;;
     save-desk) cmd_save_desk ;;
     *)      error "usage: monitor-input detect|state|switch|switch-raw|reachable|save-desk" ;;
@@ -70,9 +70,48 @@ require_deps() {
 # Core Functions
 ################################################################################
 
+# `ddcutil detect` output, run at most once per invocation.
+#
+# cmd_switch used to pay for it twice - desk_key, then present_serials - and
+# detect is not cheap. The cache must be primed by the COMMAND, not lazily by
+# the helpers: present_serials is read through `$(...)` and `< <(...)`, both of
+# which run in a subshell, so an assignment made there is discarded.
+DETECT_CACHE=""
+
+prime_detect() {
+  [ -n "$DETECT_CACHE" ] || DETECT_CACHE=$(ddcutil detect 2>/dev/null || true)
+}
+
+detect_raw() {
+  if [ -n "$DETECT_CACHE" ]; then printf '%s\n' "$DETECT_CACHE"
+  else ddcutil detect 2>/dev/null || true
+  fi
+}
+
 # Serials of every monitor answering DDC right now, one per line.
+#
+# Taking the text after the colon rather than $NF: ddcutil prints the field
+# with an empty value for a panel that reports no serial, and $NF on
+# "   Serial number:" yields the literal string "number:". That string then
+# became part of desk_key, added a phantom row to the setup grid, and made
+# every capabilities lookup for it fail.
 present_serials() {
-  ddcutil detect 2>/dev/null | awk '/Serial number:/ { print $NF }' || true
+  detect_raw | awk '
+    /Serial number:/ {
+      sub(/^[[:space:]]*Serial number:[[:space:]]*/, "")
+      if ($0 != "") print
+    }'
+}
+
+# Two monitors reporting the same serial cannot be addressed apart: every
+# `ddcutil --sn` call matches both and ddcutil refuses. Caught here, at the
+# start, rather than as a confusing mid-switch failure with some screens
+# already moved.
+verify_unique_serials() {
+  local dupes
+  dupes=$(present_serials | sort | uniq -d | paste -sd ', ' -)
+  [ -z "$dupes" ] \
+    || error "two monitors report the same serial (${dupes}) - they cannot be told apart over DDC"
 }
 
 # serial<TAB>model for every monitor answering DDC right now, one per line.
@@ -82,10 +121,14 @@ present_serials() {
 # and a block with no Model line still yields its serial with an empty
 # model instead of being dropped.
 monitor_records() {
-  ddcutil detect 2>/dev/null | awk '
+  detect_raw | awk '
     function flush() { if (serial != "") print serial "\t" model }
     /^Display / { flush(); serial = ""; model = "" }
-    /Serial number:/ { serial = $NF }
+    /Serial number:/ {
+      line = $0
+      sub(/^[[:space:]]*Serial number:[[:space:]]*/, "", line)
+      serial = line
+    }
     /Model:/ { sub(/^[[:space:]]*Model:[[:space:]]*/, ""); model = $0 }
     END { flush() }
   ' || true
@@ -118,6 +161,8 @@ capabilities_for() {
 }
 
 cmd_detect() {
+  prime_detect
+
   local serial model codes
   {
     echo '{"monitors":['
@@ -174,6 +219,8 @@ read_input() {
 # filled in has an empty inputs map, and `all` over an empty list is true, so
 # without it every blank computer would match everything.
 cmd_state() {
+  prime_detect
+
   local key desk live
   key=$(desk_key)
   desk=$(desk_json "$key")
@@ -246,16 +293,40 @@ verify_codes() {
   done
 }
 
+# Two switches interleaving on the same I2C buses - a hotkey pressed while the
+# menu is mid-switch, or the two per-monitor bar instances both firing - can
+# leave the desk split across computers. Serialised on a lock beside the desk
+# file, in the user's own config directory.
+with_switch_lock() {
+  local dir lock
+  dir=$(dirname "$DESKS")
+  mkdir -p "$dir"
+  lock="${dir}/.switch.lock"
+
+  # No flock is not a reason to refuse to switch; it only means two concurrent
+  # runs are possible, which is the behaviour we had all along.
+  if command -v flock >/dev/null; then
+    exec 9>"$lock"
+    flock 9
+  fi
+  "$@"
+}
+
 cmd_switch() {
   local target="${1:-}" only=""
   shift || true
   while [ $# -gt 0 ]; do
     case "$1" in
-      --monitor) only="$2"; shift 2 ;;
+      --monitor)
+        [ $# -ge 2 ] || error "usage: monitor-input switch <computer> [--monitor <serial>]"
+        only="$2"; shift 2 ;;
       *) error "unknown option: $1" ;;
     esac
   done
   [ -n "$target" ] || error "usage: monitor-input switch <computer> [--monitor <serial>]"
+
+  prime_detect
+  verify_unique_serials
 
   local key desk computer
   key=$(desk_key)

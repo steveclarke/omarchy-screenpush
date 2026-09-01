@@ -85,7 +85,7 @@ Panel {
   // stopped caring about - and the dialog names a machine, so a half-remembered
   // "Send anyway" would go somewhere they did not just choose.
   //
-  // busy resets here too. A switch takes about a second and closes the panel
+  // busy resets here too. A switch takes a few seconds and closes the panel
   // itself when it finishes, so a `busy` surviving into a fresh summon is
   // stale by definition - and reopening the menu is the gesture someone makes
   // when it has stopped responding, so it is the thing that should unstick it.
