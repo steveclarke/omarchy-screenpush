@@ -224,7 +224,7 @@ Item {
     // fitted* clamps to the screen and adds the border+padding inset. The
     // hand-rolled arithmetic this replaces ran the card off the right edge
     // once enough computers were added, taking the Save button with it.
-    contentWidth: sheet.fittedContentWidth(Style.space(220) + root.computers.length * Style.space(180))
+    contentWidth: sheet.fittedContentWidth(Style.space(300) + root.computers.length * Style.space(260))
     contentHeight: sheet.fittedContentHeight(column.implicitHeight, Style.space(520))
 
     PanelKeyCatcher {
@@ -254,26 +254,32 @@ Item {
           columnSpacing: Style.space(12)
           rowSpacing: Style.space(8)
 
-          Item { Layout.preferredWidth: Style.space(200) }
+          Item { Layout.preferredWidth: Style.space(280) }
 
           Repeater {
             model: root.computers.length
             delegate: ColumnLayout {
               required property int index
-              Layout.preferredWidth: Style.space(160)
+              Layout.preferredWidth: Style.space(240)
               spacing: Style.space(2)
 
+              // Seeded once rather than bound. `text:` as a binding on a model
+              // the handler writes back to is a loop: setLabel mutates
+              // computers, the binding re-evaluates, textChanged fires again.
+              // Qt reports it as "Binding loop detected for property text".
+              // onTextEdited (not onTextChanged) fires only for real typing,
+              // so a programmatic reseed cannot re-enter it either.
               TextField {
                 Layout.fillWidth: true
-                text: root.computers[index].label
-                onTextChanged: root.setLabel(index, text)
+                Component.onCompleted: text = root.computers[index].label
+                onTextEdited: root.setLabel(index, text)
               }
 
               TextField {
                 Layout.fillWidth: true
-                placeholderText: "Hostname to ping first (optional)"
-                text: root.computers[index].host || ""
-                onTextChanged: root.setHost(index, text)
+                placeholderText: "Hostname (optional)"
+                Component.onCompleted: text = root.computers[index].host || ""
+                onTextEdited: root.setHost(index, text)
               }
             }
           }

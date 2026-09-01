@@ -170,6 +170,10 @@ Panel {
     // Broadcast: an IPC call lands on one instance, and a stale second screen
     // is exactly what this exists to prevent.
     function refresh(): void { root.broadcast("refresh") }
+    // Opening setup without going through the menu. Worth having on its own
+    // terms - it gives the setup sheet a bindable entry point - and it is the
+    // only way to reach the sheet without a pointer.
+    function setup(): void { root.close(); setupLoader.active = true }
     function send(id: string): string { root.sendTo(id); return "ok" }
   }
 
