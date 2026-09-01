@@ -68,8 +68,9 @@ Panel {
   // itself when it finishes, so a `busy` surviving into a fresh summon is
   // stale by definition - and reopening the menu is the gesture someone makes
   // when it has stopped responding, so it is the thing that should unstick it.
-  // This is the belt to the two onErrorOccurred braces above: it covers any
-  // future process whose failure mode nobody anticipated.
+  // Quickshell's Process has no errorOccurred signal, so a process that fails
+  // to start reports nothing at all, and this reset is the only thing that
+  // releases the menu in that case.
   onOpenedChanged: {
     if (opened) {
       submenuSerial = ""
@@ -96,13 +97,6 @@ Panel {
       if (exitCode === 0) { root.reallySendTo(root.pendingComputer); return }
       root.confirmOpen = true
     }
-    // A process that cannot start emits errorOccurred and NEVER emits exited:
-    // Qt reports FailedToStart instead of finishing. Without this the menu
-    // would sit disabled forever behind a `busy` that nothing can clear -
-    // exactly what a botched install of this plugin looks like from the bar.
-    // Failing open is right here: reachability is advisory, so a check that
-    // could not run should not stop the switch the person asked for.
-    onErrorOccurred: root.reallySendTo(root.pendingComputer)
   }
 
   Process {
@@ -124,7 +118,6 @@ Panel {
     }
     // Failing closed is right here: nothing moved, so release the menu and
     // let them try again, unlike reachProc's fail-open above.
-    onErrorOccurred: root.busy = false
   }
 
   Process { id: notifyProc }

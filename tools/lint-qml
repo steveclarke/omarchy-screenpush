@@ -59,10 +59,21 @@ main() {
   local out
   out=$("$QMLLINT" -I "$work" "$@" 2>&1) || true
 
+  # `unqualified` is allowlisted wholesale, but it also carries "no matching
+  # signal found for handler" - a handler for a signal that does not exist,
+  # which makes the whole component fail to load at runtime with "Cannot
+  # assign to non-existent property". That exact defect shipped here once and
+  # cost a working plugin, hidden inside an allowlist entry justified by
+  # first-party noise. Anything matching FATAL is a finding whatever class it
+  # carries. An allowlist needs a deny list.
+  local fatal='no matching signal found for handler'
+
   local bad
   bad=$(printf '%s\n' "$out" | grep -E '^(Error|Warning):' \
         | grep -vE "\[($ALLOWED)\]$" \
         | grep -vF "$TOLERATED" || true)
+  bad="${bad}"$'\n'"$(printf '%s\n' "$out" | grep -F "$fatal" || true)"
+  bad=$(printf '%s' "$bad" | grep -v '^[[:space:]]*$' || true)
 
   if [ -n "$bad" ]; then
     printf '%s\n' "$out"
