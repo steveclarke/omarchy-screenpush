@@ -63,11 +63,19 @@ Panel {
   // open on the next summon, presenting a stale target the person has since
   // stopped caring about - and the dialog names a machine, so a half-remembered
   // "Send anyway" would go somewhere they did not just choose.
+  //
+  // busy resets here too. A switch takes about a second and closes the panel
+  // itself when it finishes, so a `busy` surviving into a fresh summon is
+  // stale by definition - and reopening the menu is the gesture someone makes
+  // when it has stopped responding, so it is the thing that should unstick it.
+  // This is the belt to the two onErrorOccurred braces above: it covers any
+  // future process whose failure mode nobody anticipated.
   onOpenedChanged: {
     if (opened) {
       submenuSerial = ""
       confirmOpen = false
       pendingComputer = ""
+      busy = false
       refresh()
     }
   }
@@ -88,6 +96,13 @@ Panel {
       if (exitCode === 0) { root.reallySendTo(root.pendingComputer); return }
       root.confirmOpen = true
     }
+    // A process that cannot start emits errorOccurred and NEVER emits exited:
+    // Qt reports FailedToStart instead of finishing. Without this the menu
+    // would sit disabled forever behind a `busy` that nothing can clear -
+    // exactly what a botched install of this plugin looks like from the bar.
+    // Failing open is right here: reachability is advisory, so a check that
+    // could not run should not stop the switch the person asked for.
+    onErrorOccurred: root.reallySendTo(root.pendingComputer)
   }
 
   Process {
@@ -98,6 +113,9 @@ Panel {
       root.busy = false
       root.close()
     }
+    // Failing closed is right here: nothing moved, so release the menu and
+    // let them try again, unlike reachProc's fail-open above.
+    onErrorOccurred: root.busy = false
   }
 
   IpcHandler {
