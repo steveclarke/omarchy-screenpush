@@ -145,7 +145,7 @@ Panel {
       Item {
         OpticalGlyph {
           anchors.centerIn: parent
-          text: "󰝹"
+          text: "󰍺"
           fontFamily: Style.font.family
           fontSize: Style.font.icon
           color: root.barForeground
