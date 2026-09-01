@@ -21,7 +21,16 @@ Panel {
 
   // Ask first, then act. reachable exits 0 for a computer with no host
   // recorded, so a desk that never named hostnames never sees a dialog.
+  //
+  // `busy` goes up HERE, not in reallySendTo. The rows are disabled by !busy,
+  // and without this they stay live while the reachability check is in flight:
+  // a second click would overwrite pendingComputer and the in-flight command,
+  // so an exit(0) from the newly-clicked reachable machine would suppress the
+  // dialog that the FIRST, unreachable, machine had earned - sending the whole
+  // desk to a machine that is not answering, with no confirmation. That is
+  // precisely the outcome this confirmation exists to prevent.
   function sendTo(computerId) {
+    busy = true
     pendingComputer = computerId
     reachProc.command = [root.engine, "reachable", computerId]
     reachProc.running = true
@@ -206,7 +215,10 @@ Panel {
         confirmText: "Send anyway"
         cancelText: "Cancel"
         onConfirmed: { root.confirmOpen = false; root.reallySendTo(root.pendingComputer) }
-        onCanceled: { root.confirmOpen = false; root.pendingComputer = "" }
+        // Cancelling is the one path that ends without a switchProc run, so it is
+        // the one path that has to hand `busy` back itself. Miss it and the menu
+        // stays disabled until the panel is reopened.
+        onCanceled: { root.confirmOpen = false; root.pendingComputer = ""; root.busy = false }
       }
     }
   }
