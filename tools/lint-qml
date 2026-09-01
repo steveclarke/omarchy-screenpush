@@ -36,6 +36,16 @@ SHELL_DIR=${OMARCHY_PATH:-/usr/share/omarchy}/shell
 # this gate will never report.
 ALLOWED='unqualified|missing-property'
 
+# One specific message, tolerated by text rather than added to ALLOWED above.
+# Every first-party Process.onExited handler (Reminder.qml, MultiSelect.qml,
+# ScreenRecording.qml) trips this: qmllint cannot resolve QProcess::ExitStatus
+# for the `exited` signal, regardless of the handler's own parameter list.
+# It is not folded into the signal-handler-parameters class because that
+# class also fires for a genuinely wrong handler signature, which is a real
+# defect this gate should keep catching - suppressing the whole class would
+# blind it to that.
+TOLERATED='Type QProcess::ExitStatus of parameter exitStatus in signal called exited'
+
 main() {
   [ $# -gt 0 ] || error "usage: tools/lint-qml <file.qml> [...]"
   require_tools
@@ -51,7 +61,8 @@ main() {
 
   local bad
   bad=$(printf '%s\n' "$out" | grep -E '^(Error|Warning):' \
-        | grep -vE "\[($ALLOWED)\]$" || true)
+        | grep -vE "\[($ALLOWED)\]$" \
+        | grep -vF "$TOLERATED" || true)
 
   if [ -n "$bad" ]; then
     printf '%s\n' "$out"

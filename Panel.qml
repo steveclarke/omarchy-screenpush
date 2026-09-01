@@ -14,13 +14,30 @@ Panel {
   readonly property string engine: Engine.enginePath(Qt.resolvedUrl)
   property var deskState: Engine.parseState("")
   property bool busy: false
+  property string pendingComputer: ""
+  property bool confirmOpen: false
 
   function refresh() { stateProc.running = true }
 
+  // Ask first, then act. reachable exits 0 for a computer with no host
+  // recorded, so a desk that never named hostnames never sees a dialog.
   function sendTo(computerId) {
+    pendingComputer = computerId
+    reachProc.command = [root.engine, "reachable", computerId]
+    reachProc.running = true
+  }
+
+  function reallySendTo(computerId) {
     busy = true
     switchProc.command = [root.engine, "switch", computerId]
     switchProc.running = true
+  }
+
+  function labelFor(computerId) {
+    for (var i = 0; i < deskState.computers.length; i++) {
+      if (deskState.computers[i].id === computerId) return deskState.computers[i].label
+    }
+    return computerId
   }
 
   function sendMonitorTo(serial, computerId) {
@@ -43,6 +60,14 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.deskState = Engine.parseState(String(text || ""))
+    }
+  }
+
+  Process {
+    id: reachProc
+    onExited: function(exitCode) {
+      if (exitCode === 0) { root.reallySendTo(root.pendingComputer); return }
+      root.confirmOpen = true
     }
   }
 
@@ -159,6 +184,19 @@ Panel {
           text: root.deskState.known ? "Set up this desk..." : "Set up this desk"
           onClicked: { root.close(); setupLoader.active = true }
         }
+      }
+
+      ConfirmDialog {
+        id: confirm
+        anchors.fill: parent
+        z: 10
+        opened: root.confirmOpen
+        message: root.labelFor(root.pendingComputer)
+                 + " is not responding. Send the screens anyway?"
+        confirmText: "Send anyway"
+        cancelText: "Cancel"
+        onConfirmed: { root.confirmOpen = false; root.reallySendTo(root.pendingComputer) }
+        onCanceled: { root.confirmOpen = false; root.pendingComputer = "" }
       }
     }
   }
