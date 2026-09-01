@@ -177,6 +177,48 @@ CAPS
   [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]
 }
 
+@test "switch refuses a desk file with two computers sharing an id" {
+  # A duplicate id is possible from a hand-edited desks.json, or a future
+  # version that stops deriving ids from what's already present. Whatever the
+  # cause, `select(.id == $id)` then returns two JSON documents instead of
+  # one, and every field read afterwards inherits both values joined by a
+  # newline - including the code handed to `ddcutil setvcp`. The engine must
+  # refuse outright rather than send a garbled code to a real monitor.
+  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+{"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office",
+ "monitors":[{"serial":"AAA0001","label":"Left","model":"STUB MONITOR"},
+             {"serial":"BBB0002","label":"Right","model":"STUB MONITOR"}],
+ "computers":[{"id":"mac","label":"Mac A","host":null,
+               "inputs":{"AAA0001":"0x11","BBB0002":"0x11"}},
+              {"id":"mac","label":"Mac B","host":null,
+               "inputs":{"AAA0001":"0x12","BBB0002":"0x12"}}]}}}
+JSON
+  run "$ENGINE" switch mac
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"more than one computer"* ]]
+  [[ "$output" == *"mac"* ]]
+  [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]   # untouched
+  [ "$(cat "$STUB_STATE/BBB0002")" = "0x0f" ]   # untouched
+}
+
+@test "switch refuses a malformed input code outright" {
+  # Exactly the shape a duplicate-id lookup produces: two valid codes joined
+  # by a newline. `grep -qx` treats an embedded newline as alternation, so
+  # the membership check alone would accept this - it has to be rejected by
+  # its shape before membership is even checked.
+  jq -n --arg code "$(printf '0x11\n0x12')" \
+    '{"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office",
+       "monitors":[{"serial":"AAA0001","label":"Left","model":"STUB MONITOR"},
+                   {"serial":"BBB0002","label":"Right","model":"STUB MONITOR"}],
+       "computers":[{"id":"mac","label":"Mac","host":null,
+                     "inputs":{"AAA0001":$code,"BBB0002":"0x11"}}]}}}' \
+    > "$XDG_CONFIG_HOME/monitor-input/desks.json"
+  run "$ENGINE" switch mac
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"malformed"* ]]
+  [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]   # untouched
+}
+
 @test "reachable succeeds when the computer has no host recorded" {
   save_office_desk
   run "$ENGINE" reachable mac

@@ -213,6 +213,15 @@ verify_codes() {
   local serial code
   while [ $# -gt 0 ]; do
     serial="$1"; code="$2"; shift 2
+    # Shape before membership. A code is exactly "0x" plus two hex digits;
+    # anything else is refused outright, before it ever reaches grep. This
+    # matters because `grep -qx` treats an embedded newline in the pattern
+    # as alternation between the lines either side of it - so a code that is
+    # really two valid codes joined by a newline (the shape a duplicate
+    # computer id produces) would otherwise sail through the membership
+    # check by matching one of its own halves.
+    [[ "$code" =~ ^0x[0-9a-fA-F][0-9a-fA-F]$ ]] \
+      || error "${serial} has a malformed input code recorded - re-run setup for this desk"
     capabilities_for "$serial" | grep -qx "$code" \
       || error "${serial} does not have input ${code} - re-run setup for this desk"
   done
@@ -234,8 +243,21 @@ cmd_switch() {
   desk=$(desk_json "$key")
   [ "$desk" != "null" ] || error "this desk (${key}) has not been set up yet"
 
-  computer=$(printf '%s' "$desk" | jq -c --arg id "$target" '.computers[] | select(.id == $id)')
-  [ -n "$computer" ] || error "no computer called '${target}' on this desk"
+  # Select into an array first so a duplicate id in the desk file is caught
+  # here rather than downstream. `select(...)` alone would emit one JSON
+  # document per match, and every field read from $computer afterwards -
+  # including the code handed to `ddcutil setvcp` - would silently inherit
+  # every match's value joined by a newline. The desk file can be
+  # hand-edited or written by a future version, so this check is the one
+  # that actually matters; the setup screen deriving unique ids is only the
+  # first line of defence, not the only one.
+  local matches match_count
+  matches=$(printf '%s' "$desk" | jq -c --arg id "$target" '[.computers[] | select(.id == $id)]')
+  match_count=$(printf '%s' "$matches" | jq 'length')
+  [ "$match_count" -gt 0 ] || error "no computer called '${target}' on this desk"
+  [ "$match_count" -eq 1 ] \
+    || error "more than one computer is named '${target}' on this desk - fix desks.json or re-run setup"
+  computer=$(printf '%s' "$matches" | jq -c '.[0]')
 
   local pairs=() serial code
   while read -r serial; do

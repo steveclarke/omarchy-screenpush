@@ -17,7 +17,6 @@ Item {
   // [{id, label, host, inputs: {serial: code}}]
   property var computers: []
   property string deskLabel: ""
-  property int nextComputerNumber: 2
 
   function open() { detectProc.running = true }
 
@@ -65,12 +64,27 @@ Item {
     computers = next
   }
 
+  // Ids must be unique: the engine looks a computer up by id, and two matches
+  // make it read two values for every field, which ends with a newline inside
+  // the code sent to a monitor. So the counter is derived from the ids already
+  // present rather than trusting its own default - a reopened desk starts the
+  // counter at 2 again otherwise, and the second "+ Computer" of the session
+  // mints an id that already exists.
+  function nextFreeNumber() {
+    var highest = 1
+    for (var i = 0; i < computers.length; i++) {
+      var match = /^computer(\d+)$/.exec(String(computers[i].id))
+      if (match) highest = Math.max(highest, parseInt(match[1], 10))
+    }
+    return highest + 1
+  }
+
   function addComputer() {
+    var number = nextFreeNumber()
     var next = JSON.parse(JSON.stringify(computers))
-    next.push({ id: "computer" + nextComputerNumber,
-                label: "Computer " + nextComputerNumber,
+    next.push({ id: "computer" + number,
+                label: "Computer " + number,
                 host: null, inputs: {} })
-    nextComputerNumber += 1
     computers = next
   }
 
