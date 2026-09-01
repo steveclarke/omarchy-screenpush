@@ -30,6 +30,9 @@ set -euo pipefail
 
 DESKS=${MONITOR_INPUT_DESKS:-${XDG_CONFIG_HOME:-$HOME/.config}/monitor-input/desks.json}
 
+# shellcheck source=../lib/desk.sh
+source "$(dirname "$(readlink -f "$0")")/../lib/desk.sh"
+
 ################################################################################
 # Main Orchestration
 ################################################################################
@@ -42,6 +45,7 @@ main() {
 
   case "$cmd" in
     detect) cmd_detect ;;
+    state)  cmd_state ;;
     *)      error "usage: monitor-input detect|state|switch|reachable" ;;
   esac
 }
@@ -106,6 +110,60 @@ cmd_detect() {
     done < <(present_serials)
     echo ']}'
   } | jq -c .
+}
+
+# The input each monitor is on right now, as {serial: code}. A monitor that
+# does not answer is omitted rather than guessed at.
+live_inputs() {
+  local serial code
+  {
+    echo '{'
+    local first=1
+    while read -r serial; do
+      [ -n "$serial" ] || continue
+      code=$(read_input "$serial")
+      [ -n "$code" ] || continue
+      [ $first -eq 1 ] || echo ','
+      first=0
+      printf '%s:%s' "$(printf '%s' "$serial" | jq -R .)" "$(printf '%s' "$code" | jq -R .)"
+    done < <(present_serials)
+    echo '}'
+  } | jq -c .
+}
+
+read_input() {
+  ddcutil --sn "$1" getvcp 60 2>/dev/null \
+    | grep -o 'sl=0x[0-9a-f]*' | cut -d= -f2 || true
+}
+
+# Which configured computer matches what every monitor is showing. Null when
+# the desk is split across computers, which is a real state after a partial
+# manual change on the monitor's own menu.
+cmd_state() {
+  local key desk live
+  key=$(desk_key)
+  desk=$(desk_json "$key")
+  live=$(live_inputs)
+
+  jq -n -c --arg key "$key" --argjson desk "$desk" --argjson live "$live" '
+    ($desk.computers // []) as $computers
+    | {
+        deskKey: $key,
+        known: ($desk != null),
+        label: ($desk.label // ""),
+        monitors: ($desk.monitors // []),
+        computers: $computers,
+        live: $live,
+        current: (
+          if ($live | length) == 0 then null
+          else
+            [ $computers[]
+              | select(. as $c | ($live | to_entries | map($c.inputs[.key] == .value) | all))
+              | .id
+            ] | first // null
+          end
+        )
+      }'
 }
 
 ################################################################################
