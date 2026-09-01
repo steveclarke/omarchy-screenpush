@@ -44,18 +44,46 @@ JSON
   echo "$output" | jq -e '.live["AAA0001"] == "0x0f"'
 }
 
+@test "a desk is still recognised when one monitor is switched off" {
+  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+{"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office","monitors":[],
+ "computers":[{"id":"this","label":"This machine","host":null,
+               "inputs":{"AAA0001":"0x0f","BBB0002":"0x0f"}}]}}}
+JSON
+  # A monitor switched off at the wall stops answering DDC and drops out of
+  # `detect`, so the key shrinks to "AAA0001". Without subset matching the desk
+  # would look unconfigured and the menu would be empty.
+  rm "$STUB_STATE/BBB0002"
+  run "$ENGINE" state
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.known == true'
+  echo "$output" | jq -e '.label == "Office"'
+  echo "$output" | jq -e '.computers | length == 1'
+  echo "$output" | jq -e '.current == null'
+}
+
+@test "an unknown desk is still reported as unknown" {
+  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+{"version":1,"desks":{"ZZZ9999+YYY8888":{"label":"Elsewhere","monitors":[],
+ "computers":[{"id":"this","label":"This machine","host":null,
+               "inputs":{"ZZZ9999":"0x0f","YYY8888":"0x0f"}}]}}}
+JSON
+  run "$ENGINE" state
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.known == false'
+}
+
 @test "state reports no current computer while a monitor is not answering" {
   cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
-{"version":1,"desks":{"AAA0001":{"label":"Office","monitors":[],
+{"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office","monitors":[],
  "computers":[{"id":"this","label":"This machine","host":null,
                "inputs":{"AAA0001":"0x0f","BBB0002":"0x0f"}},
               {"id":"mac","label":"Mac","host":null,
                "inputs":{"AAA0001":"0x11","BBB0002":"0x11"}}]}}}
 JSON
-  # Keyed "AAA0001", not "AAA0001+BBB0002": desk_key is built from the serials
-  # PRESENT, and with one panel asleep only one is present. Keying it this way
-  # is what makes the desk resolve, so the test actually exercises `current`
-  # rather than passing because the desk was never found.
+  # Keyed normally: subset matching in desk_json resolves it even though only
+  # one serial is present, so this test exercises `current` rather than
+  # passing because the desk lookup missed.
   # Second panel asleep. Its input is unknowable, so the honest answer is
   # "I cannot tell" - not "this", inferred from the one panel still talking.
   rm "$STUB_STATE/BBB0002"
