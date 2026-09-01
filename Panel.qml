@@ -11,6 +11,13 @@ Panel {
   ipcTarget: "monitor-input"
   manageIpc: false
 
+  // A bar widget must publish its own size. Item defaults to 0x0, so
+  // without these the bar allocates no width: the widget loads, runs and
+  // registers its IPC, and draws nothing. Every first-party bar widget
+  // sets these off its button.
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
+
   readonly property string engine: Engine.enginePath(Qt.resolvedUrl)
   property var deskState: Engine.parseState("")
   property bool busy: false
