@@ -10,18 +10,24 @@ desk_key() {
 
 # The stored object for a desk key, or the string "null".
 #
-# Exact key match first, which is the ordinary case. Failing that, the stored
-# desk whose monitors are a SUPERSET of what is present, preferring the one
-# with the fewest extras.
+# Exact key match first, which is the ordinary case. Failing that, among
+# stored desks that share at least one serial with what is present, the one
+# with the largest overlap - preferring, on a tie, the one with the fewest
+# extras (stored serials that are not present).
 #
 # The fallback is not a nicety. desk_key is built from the monitors answering
-# DDC, and a monitor that is switched off at the wall stops answering entirely
-# - so a desk with one dark panel produces a shorter key that matches nothing,
-# and the menu would report a brand-new unconfigured desk and offer no
-# computers at all. Someone who turns one screen off overnight would find the
-# plugin empty in the morning. Matching on subset keeps the desk recognised,
-# and `current` still returns null because the dark panel's input is genuinely
-# unknowable.
+# DDC, and that set moves in both directions: a monitor switched off at the
+# wall stops answering (the key shrinks), and a monitor plugged in for the
+# first time starts answering (the key grows). Either way an exact-key match
+# fails, and requiring the stored desk to be a superset of what is present -
+# the old rule - only covered the first direction. Someone who plugs in a
+# third screen would find the desk "unknown", lose every computer and every
+# input mapping, and have setup save a second entry under the new key while
+# the original sat there orphaned. Matching on overlap covers both
+# directions at once: `current` still returns null for any monitor that
+# genuinely is not present, because that monitor's input is unknowable, but
+# the desk itself - its computers, its labels - is not lost just because the
+# hardware in front of it changed shape.
 desk_json() {
   [ -f "$DESKS" ] || { echo "null"; return 0; }
   jq -c --arg k "$1" '
@@ -31,9 +37,12 @@ desk_json() {
       else
         ( [ .desks | to_entries[]
             | (.key | split("+")) as $serials
-            | select((($present - $serials) | length) == 0)
-            | { extras: ((($serials - $present)) | length), desk: .value } ]
-          | sort_by(.extras) | first ) as $match
+            | ($serials - ($serials - $present)) as $common
+            | select(($common | length) > 0)
+            | { common: ($common | length),
+                extras: ((($serials - $present)) | length),
+                desk: .value } ]
+          | sort_by([-.common, .extras]) | first ) as $match
         | if $match == null then null else $match.desk end
       end' "$DESKS" 2>/dev/null || echo "null"
 }

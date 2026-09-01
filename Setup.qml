@@ -64,6 +64,16 @@ Item {
     computers = next
   }
 
+  // Empty means "nothing to check", not the empty string: cmd_reachable
+  // treats a missing host as advisory-only and always exits 0, and it does
+  // that by testing for a JSON null, not for the empty string a blanked
+  // TextField would otherwise write.
+  function setHost(computerIndex, text) {
+    var next = JSON.parse(JSON.stringify(computers))
+    next[computerIndex].host = text === "" ? null : text
+    computers = next
+  }
+
   // Ids must be unique: the engine looks a computer up by id, and two matches
   // make it read two values for every field, which ends with a newline inside
   // the code sent to a monitor. So the counter is derived from the ids already
@@ -163,9 +173,21 @@ Item {
     command: [root.engine, "save-desk"]
     stdinEnabled: true
     property string stdinText: ""
+    stderr: StdioCollector { id: saveStderr; waitForEnd: true }
     onStarted: { write(stdinText); stdinEnabled = false }
-    onRunningChanged: if (!running) root.closed()
+    // A failed save (a malformed payload, a disk that would not accept the
+    // rename) must not close the sheet: closing unconditionally here would
+    // discard the whole grid the person just filled in, with no way back
+    // but to redo it. Close on success only; on failure, surface the
+    // engine's own message and leave the grid exactly as it was.
+    onExited: function(exitCode) {
+      if (exitCode === 0) { root.closed(); return }
+      notifyProc.command = ["notify-send", "Monitor Input", String(saveStderr.text || "").trim()]
+      notifyProc.running = true
+    }
   }
+
+  Process { id: notifyProc }
 
   KeyboardPanel {
     id: sheet
@@ -199,11 +221,23 @@ Item {
 
         Repeater {
           model: root.computers.length
-          delegate: TextField {
+          delegate: ColumnLayout {
             required property int index
             Layout.preferredWidth: Style.space(160)
-            text: root.computers[index].label
-            onTextChanged: root.setLabel(index, text)
+            spacing: Style.space(2)
+
+            TextField {
+              Layout.fillWidth: true
+              text: root.computers[index].label
+              onTextChanged: root.setLabel(index, text)
+            }
+
+            TextField {
+              Layout.fillWidth: true
+              placeholderText: "Hostname to ping first (optional)"
+              text: root.computers[index].host || ""
+              onTextChanged: root.setHost(index, text)
+            }
           }
         }
 

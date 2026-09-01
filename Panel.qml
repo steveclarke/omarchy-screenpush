@@ -108,15 +108,26 @@ Panel {
   Process {
     id: switchProc
     stdout: StdioCollector { waitForEnd: true }
-    onRunningChanged: {
-      if (running) return
+    stderr: StdioCollector { id: switchStderr; waitForEnd: true }
+    // A refusal - no DDC response, an unsupported code, an ambiguous
+    // computer id - exits non-zero with the reason on stderr, written by
+    // the engine to be read by a person. Closing unconditionally here would
+    // make every refusal look identical to a success: the menu just shuts
+    // and nothing moves, with no way to tell the two apart. So close only
+    // on success; on failure, leave the menu as it is and surface the
+    // engine's own message instead.
+    onExited: function(exitCode) {
       root.busy = false
-      root.close()
+      if (exitCode === 0) { root.close(); return }
+      notifyProc.command = ["notify-send", "Monitor Input", String(switchStderr.text || "").trim()]
+      notifyProc.running = true
     }
     // Failing closed is right here: nothing moved, so release the menu and
     // let them try again, unlike reachProc's fail-open above.
     onErrorOccurred: root.busy = false
   }
+
+  Process { id: notifyProc }
 
   IpcHandler {
     target: root.ipcTarget

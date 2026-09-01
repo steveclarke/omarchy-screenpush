@@ -14,6 +14,12 @@ setup() {
   echo "$output" | jq -e '.monitors[] | select(.serial == "AAA0001") | .inputs == ["0x0f","0x11","0x12"]'
 }
 
+@test "detect reports each monitor's model" {
+  run "$ENGINE" detect
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.monitors[] | select(.serial == "AAA0001") | .model == "STUB MONITOR"'
+}
+
 @test "state reports the desk key from the serials present" {
   run "$ENGINE" state
   [ "$status" -eq 0 ]
@@ -60,6 +66,26 @@ JSON
   echo "$output" | jq -e '.label == "Office"'
   echo "$output" | jq -e '.computers | length == 1'
   echo "$output" | jq -e '.current == null'
+}
+
+@test "a desk is still recognised when a monitor is added" {
+  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+{"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office","monitors":[],
+ "computers":[{"id":"this","label":"This machine","host":null,
+               "inputs":{"AAA0001":"0x0f","BBB0002":"0x0f"}},
+              {"id":"mac","label":"Mac","host":null,
+               "inputs":{"AAA0001":"0x11","BBB0002":"0x11"}}]}}}
+JSON
+  # A third monitor plugged in grows the key to "AAA0001+BBB0002+CCC0003",
+  # which matches nothing exactly. Without overlap matching this desk would
+  # look brand-new and every computer would be lost.
+  echo "0x0f" > "$STUB_STATE/CCC0003"
+  echo "CCC0003 0x0f 0x11" >> "$STUB_CAPS"
+  run "$ENGINE" state
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.known == true'
+  echo "$output" | jq -e '.label == "Office"'
+  echo "$output" | jq -e '.computers | length == 2'
 }
 
 @test "an unknown desk is still reported as unknown" {

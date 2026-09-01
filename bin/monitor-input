@@ -75,6 +75,22 @@ present_serials() {
   ddcutil detect 2>/dev/null | awk '/Serial number:/ { print $NF }' || true
 }
 
+# serial<TAB>model for every monitor answering DDC right now, one per line.
+# Real ddcutil prints "Model:" before "Serial number:" within a Display
+# block; the test stub prints them the other way around. Blocks are
+# delimited by "Display " lines rather than by field order, so both work,
+# and a block with no Model line still yields its serial with an empty
+# model instead of being dropped.
+monitor_records() {
+  ddcutil detect 2>/dev/null | awk '
+    function flush() { if (serial != "") print serial "\t" model }
+    /^Display / { flush(); serial = ""; model = "" }
+    /Serial number:/ { serial = $NF }
+    /Model:/ { sub(/^[[:space:]]*Model:[[:space:]]*/, ""); model = $0 }
+    END { flush() }
+  ' || true
+}
+
 # The input codes a monitor reports it actually has. Sending a code a panel
 # lacks blacks it with no display left to recover on, so this list is the
 # only source the setup screen ever offers.
@@ -102,17 +118,18 @@ capabilities_for() {
 }
 
 cmd_detect() {
-  local serial codes
+  local serial model codes
   {
     echo '{"monitors":['
     local first=1
-    while read -r serial; do
+    while IFS=$'\t' read -r serial model; do
       [ -n "$serial" ] || continue
       codes=$(capabilities_for "$serial" | jq -R . | jq -s -c .)
       [ $first -eq 1 ] || echo ','
       first=0
-      printf '{"serial":%s,"inputs":%s}' "$(printf '%s' "$serial" | jq -R .)" "$codes"
-    done < <(present_serials)
+      printf '{"serial":%s,"model":%s,"inputs":%s}' \
+        "$(printf '%s' "$serial" | jq -R .)" "$(printf '%s' "$model" | jq -R .)" "$codes"
+    done < <(monitor_records)
     echo ']}'
   } | jq -c .
 }
