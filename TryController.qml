@@ -59,6 +59,16 @@ Item {
   Process {
     id: applyProc
     stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { id: applyStderr; waitForEnd: true }
+    // A refused switch-raw - a stale code, a sleeping monitor, DDC/CI turned
+    // off in the monitor's own menu - exited silently, and the button then sat
+    // there offering to bring back a screen that never moved. Say so instead.
+    onExited: function(exitCode) {
+      if (exitCode === 0) return
+      root.clear()
+      notifyProc.command = ["notify-send", "Monitor Input", String(applyStderr.text || "").trim()]
+      notifyProc.running = true
+    }
     onRunningChanged: {
       if (running) return
       // Only a single-monitor desk needs the timer. With a second screen the
@@ -71,8 +81,19 @@ Item {
   Process {
     id: revertProc
     stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { id: revertStderr; waitForEnd: true }
+    // Failing to revert is the worse half of the pair: the screen is sitting
+    // on the input we moved it to and the person is looking at another machine.
+    onExited: function(exitCode) {
+      if (exitCode === 0) return
+      notifyProc.command = ["notify-send", "Monitor Input",
+                            "Could not bring the screen back: " + String(revertStderr.text || "").trim()]
+      notifyProc.running = true
+    }
     onRunningChanged: if (!running) root.clear()
   }
+
+  Process { id: notifyProc }
 
   Timer {
     id: autoRevert

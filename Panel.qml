@@ -26,6 +26,20 @@ Panel {
 
   function refresh() { stateProc.running = true }
 
+  // Ui/Panel has no broadcast(); this is Ui/BarWidget.qml:29-35. A bar surface
+  // exists per monitor, so an IPC call or a process exit reaches exactly one
+  // instance - the others keep showing stale state until they are reopened.
+  // Relay refreshes only. Broadcasting a side effect like sendTo would run the
+  // DDC switch once per screen, and calling this from inside refresh() would
+  // recurse forever, so the caller broadcasts and refresh() stays local.
+  function broadcast(method) {
+    var items = bar && typeof bar.moduleWidgets === "function"
+      ? bar.moduleWidgets(moduleName) : [root]
+    for (var i = 0; i < items.length; i++) {
+      if (items[i] && typeof items[i][method] === "function") items[i][method]()
+    }
+  }
+
   // Ask first, then act. reachable exits 0 for a computer with no host
   // recorded, so a desk that never named hostnames never sees a dialog.
   //
@@ -104,8 +118,21 @@ Panel {
 
   Process {
     id: reachProc
+    stderr: StdioCollector { id: reachStderr; waitForEnd: true }
+    // Non-zero does not always mean "the machine is not answering". On a desk
+    // that was never set up the engine exits 1 with its own explanation, and
+    // asking "send the screens anyway?" would be both wrong and unanswerable.
+    // Only an actual reachability failure earns the dialog.
     onExited: function(exitCode) {
       if (exitCode === 0) { root.reallySendTo(root.pendingComputer); return }
+      var reason = String(reachStderr.text || "").trim()
+      if (reason !== "") {
+        root.busy = false
+        root.pendingComputer = ""
+        notifyProc.command = ["notify-send", "Monitor Input", reason]
+        notifyProc.running = true
+        return
+      }
       root.confirmOpen = true
     }
   }
@@ -123,7 +150,7 @@ Panel {
     // engine's own message instead.
     onExited: function(exitCode) {
       root.busy = false
-      if (exitCode === 0) { root.close(); return }
+      if (exitCode === 0) { root.broadcast("refresh"); root.close(); return }
       notifyProc.command = ["notify-send", "Monitor Input", String(switchStderr.text || "").trim()]
       notifyProc.running = true
     }
@@ -137,7 +164,12 @@ Panel {
     target: root.ipcTarget
     function open(): void { root.open() }
     function close(): void { root.close() }
+    function show(): void { root.open() }
+    function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
+    // Broadcast: an IPC call lands on one instance, and a stale second screen
+    // is exactly what this exists to prevent.
+    function refresh(): void { root.broadcast("refresh") }
     function send(id: string): string { root.sendTo(id); return "ok" }
   }
 
@@ -145,17 +177,14 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    iconComponent: Component {
-      Item {
-        OpticalGlyph {
-          anchors.centerIn: parent
-          text: "󰍺"
-          fontFamily: Style.font.family
-          fontSize: Style.font.icon
-          color: root.barForeground
-        }
-      }
-    }
+    // BarIconButton already renders `text` through an anchors.filled
+    // OpticalGlyph, coloured from bar.barForeground with the bar's own colour
+    // animation (Ui/BarIconButton.qml:29-39). The hand-built iconComponent
+    // this replaces centred a glyph in a zero-sized Item, opted out of the
+    // active-state colouring and the theme transition, and sized off
+    // Style.font.icon rather than the bar's Style.bar.iconFont. Every
+    // first-party bar widget just sets text.
+    text: "󰍺"
     onPressed: root.toggle()
   }
 
@@ -172,6 +201,9 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      // Stand down while the confirmation owns the keyboard, otherwise Esc
+      // closes the panel out from under a dialog that should have cancelled.
+      blocked: root.confirmOpen
       onCloseRequested: root.close()
 
       ColumnLayout {
@@ -215,7 +247,7 @@ Panel {
           }
         }
 
-        PanelSeparator {}
+        PanelSeparator { Layout.fillWidth: true }
 
         Button {
           Layout.fillWidth: true
@@ -235,6 +267,24 @@ Panel {
           Layout.fillWidth: true
           text: root.deskState.known ? "Set up this desk..." : "Set up this desk"
           onClicked: { root.close(); setupLoader.active = true }
+        }
+      }
+
+      // ConfirmDialog has no focus of its own - Ui/ConfirmDialog.qml:23 exposes
+      // handleKey(event) and expects the parent to route keys into it, which
+      // is what clipboard and menu do. Without this the dialog is mouse-only:
+      // Enter and the arrows do nothing, and Esc closes the whole panel
+      // instead of cancelling. PanelKeyCatcher sees keys first, so this takes
+      // focus while the dialog is up and hands it straight back after.
+      Item {
+        id: confirmKeys
+        anchors.fill: parent
+        z: 11
+        visible: root.confirmOpen
+        onVisibleChanged: if (visible) forceActiveFocus(); else keyCatcher.forceActiveFocus()
+        Keys.priority: Keys.BeforeItem
+        Keys.onPressed: function(event) {
+          if (confirm.handleKey(event)) event.accepted = true
         }
       }
 
@@ -260,6 +310,14 @@ Panel {
     id: setupLoader
     active: false
     source: Qt.resolvedUrl("Setup.qml")
+    onStatusChanged: {
+      if (status === Loader.Error) {
+        notifyProc.command = ["notify-send", "Monitor Input",
+                              "The setup screen failed to load. See: journalctl --user -b | grep monitor-input"]
+        notifyProc.running = true
+        active = false
+      }
+    }
     onLoaded: {
       item.engine = root.engine
       // KeyboardPanel positions itself against the bar icon, so Setup needs
