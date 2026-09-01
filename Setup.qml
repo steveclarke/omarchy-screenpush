@@ -27,6 +27,13 @@ Item {
 
   function open() { detectProc.running = true }
 
+  // KeyboardPanel.close() calls owner.close() if the owner has one, and
+  // Bar.requestPopout() closes a displaced popup through closeForPopoutSwitch
+  // or close. Without this function neither finds anything: the sheet vanishes
+  // without emitting closed(), Panel.qml's Loader stays active, onLoaded never
+  // re-fires, and "Set up this desk" is dead for the rest of the session.
+  function close() { root.closed() }
+
   // Human names for the codes the hardware reports, so a cell reads
   // "HDMI 1" rather than "0x11". Anything unrecognised falls through as
   // the raw code rather than being hidden, because a monitor with an
@@ -106,6 +113,11 @@ Item {
   }
 
   function save() {
+    // onStarted clears stdinEnabled after writing, and a failed save
+    // deliberately leaves the sheet open to retry. Without re-arming here the
+    // retry's write() goes nowhere, the engine reads EOF, and it reports
+    // "stdin is not valid JSON" forever - a wrong reason the user cannot act on.
+    saveProc.stdinEnabled = true
     var payload = {
       label: deskLabel === "" ? "My desk" : deskLabel,
       monitors: monitors.map(function(m) {
@@ -202,129 +214,146 @@ Item {
     anchorItem: root.anchorItem
     bar: root.bar
     open: true
-    contentWidth: Style.space(220) + root.computers.length * Style.space(180)
-    contentHeight: Style.space(140) + root.monitors.length * Style.space(64)
+    // centerOnBar because this sheet is far wider than the bar icon it hangs
+    // off; anchored to the icon it would sit half off-screen near an edge.
+    centerOnBar: true
+    // The surface gets keyboard focus, but Qt needs an active-focus item
+    // inside it before any key handler fires. Without this Esc does nothing
+    // and the first click is spent focusing a field.
+    focusTarget: keyCatcher
+    // fitted* clamps to the screen and adds the border+padding inset. The
+    // hand-rolled arithmetic this replaces ran the card off the right edge
+    // once enough computers were added, taking the Save button with it.
+    contentWidth: sheet.fittedContentWidth(Style.space(220) + root.computers.length * Style.space(180))
+    contentHeight: sheet.fittedContentHeight(column.implicitHeight, Style.space(520))
 
-    ColumnLayout {
+    PanelKeyCatcher {
+      id: keyCatcher
       anchors.fill: parent
-      spacing: Style.space(8)
+      onCloseRequested: root.close()
 
-      PanelSectionHeader { text: "Which input is each computer plugged into?" }
+      ColumnLayout {
+        id: column
+        anchors.fill: parent
+        spacing: Style.space(8)
 
-      Text {
-        Layout.fillWidth: true
-        visible: root.monitors.filter(function(m) { return m.inputs.length === 0 }).length > 0
-        wrapMode: Text.WordWrap
-        text: "Some monitors here cannot be switched from software. They will keep "
-              + "showing whatever they are on now."
-        color: Color.urgent
-        font.family: Style.font.family
-      }
+        PanelSectionHeader { text: "Which input is each computer plugged into?" }
 
-      GridLayout {
-        columns: root.computers.length + 1
-        columnSpacing: Style.space(12)
-        rowSpacing: Style.space(8)
-
-        Item { Layout.preferredWidth: Style.space(200) }
-
-        Repeater {
-          model: root.computers.length
-          delegate: ColumnLayout {
-            required property int index
-            Layout.preferredWidth: Style.space(160)
-            spacing: Style.space(2)
-
-            TextField {
-              Layout.fillWidth: true
-              text: root.computers[index].label
-              onTextChanged: root.setLabel(index, text)
-            }
-
-            TextField {
-              Layout.fillWidth: true
-              placeholderText: "Hostname to ping first (optional)"
-              text: root.computers[index].host || ""
-              onTextChanged: root.setHost(index, text)
-            }
-          }
+        Text {
+          Layout.fillWidth: true
+          visible: root.monitors.filter(function(m) { return m.inputs.length === 0 }).length > 0
+          wrapMode: Text.WordWrap
+          text: "Some monitors here cannot be switched from software. They will keep "
+                + "showing whatever they are on now."
+          color: Color.urgent
+          font.family: Style.font.family
         }
 
-        Repeater {
-          model: root.monitors.length * (root.computers.length + 1)
-          delegate: Item {
-            required property int index
-            readonly property int columns: root.computers.length + 1
-            readonly property int row: Math.floor(index / columns)
-            readonly property int col: index % columns
-            readonly property var monitor: root.monitors[row]
+        GridLayout {
+          columns: root.computers.length + 1
+          columnSpacing: Style.space(12)
+          rowSpacing: Style.space(8)
 
-            Layout.preferredWidth: col === 0 ? Style.space(200) : Style.space(160)
-            Layout.preferredHeight: Style.space(56)
+          Item { Layout.preferredWidth: Style.space(200) }
 
-            ColumnLayout {
-              anchors.fill: parent
-              visible: col === 0
-              spacing: 0
-              Text {
-                text: monitor ? monitor.label : ""
-                color: Color.foreground
-                font.family: Style.font.family
+          Repeater {
+            model: root.computers.length
+            delegate: ColumnLayout {
+              required property int index
+              Layout.preferredWidth: Style.space(160)
+              spacing: Style.space(2)
+
+              TextField {
+                Layout.fillWidth: true
+                text: root.computers[index].label
+                onTextChanged: root.setLabel(index, text)
               }
+
+              TextField {
+                Layout.fillWidth: true
+                placeholderText: "Hostname to ping first (optional)"
+                text: root.computers[index].host || ""
+                onTextChanged: root.setHost(index, text)
+              }
+            }
+          }
+
+          Repeater {
+            model: root.monitors.length * (root.computers.length + 1)
+            delegate: Item {
+              required property int index
+              readonly property int columns: root.computers.length + 1
+              readonly property int row: Math.floor(index / columns)
+              readonly property int col: index % columns
+              readonly property var monitor: root.monitors[row]
+
+              Layout.preferredWidth: col === 0 ? Style.space(200) : Style.space(160)
+              Layout.preferredHeight: Style.space(56)
+
+              ColumnLayout {
+                anchors.fill: parent
+                visible: col === 0
+                spacing: 0
+                Text {
+                  text: monitor ? monitor.label : ""
+                  color: Color.foreground
+                  font.family: Style.font.family
+                }
+                Text {
+                  text: monitor ? monitor.model : ""
+                  color: Qt.darker(Color.foreground, 1.55)
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.caption
+                }
+              }
+
+              ColumnLayout {
+                anchors.fill: parent
+                visible: col > 0 && monitor && monitor.inputs.length > 0
+                spacing: Style.space(2)
+
+                Dropdown {
+                  Layout.fillWidth: true
+                  showLabel: false
+                  options: monitor ? root.optionsFor(monitor.serial) : []
+                  value: monitor ? root.cellValue(col - 1, monitor.serial) : ""
+                  onChanged: function(v) { if (monitor) root.setCell(col - 1, monitor.serial, v) }
+                }
+
+                Button {
+                  Layout.fillWidth: true
+                  text: tryController.serial === (monitor ? monitor.serial : "")
+                        && tryController.column === col
+                        ? "Bring it back" : "Try it"
+                  enabled: monitor && root.cellValue(col - 1, monitor.serial) !== ""
+                  onClicked: tryController.toggle(monitor.serial, col,
+                                                  root.cellValue(col - 1, monitor.serial))
+                }
+              }
+
+              // A monitor that answers DDC but lists no input codes cannot be switched
+              // from software at all. Saying so here is the whole of R16: the alternative
+              // is an empty dropdown that looks like a bug in this plugin.
               Text {
-                text: monitor ? monitor.model : ""
+                anchors.fill: parent
+                visible: col > 0 && monitor && monitor.inputs.length === 0
+                wrapMode: Text.WordWrap
+                text: "No input switching. Check DDC/CI is enabled in this monitor's own menu."
                 color: Qt.darker(Color.foreground, 1.55)
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
               }
             }
-
-            ColumnLayout {
-              anchors.fill: parent
-              visible: col > 0 && monitor && monitor.inputs.length > 0
-              spacing: Style.space(2)
-
-              Dropdown {
-                Layout.fillWidth: true
-                showLabel: false
-                options: monitor ? root.optionsFor(monitor.serial) : []
-                value: monitor ? root.cellValue(col - 1, monitor.serial) : ""
-                onChanged: function(v) { if (monitor) root.setCell(col - 1, monitor.serial, v) }
-              }
-
-              Button {
-                Layout.fillWidth: true
-                text: tryController.serial === (monitor ? monitor.serial : "")
-                      && tryController.column === col
-                      ? "Bring it back" : "Try it"
-                enabled: monitor && root.cellValue(col - 1, monitor.serial) !== ""
-                onClicked: tryController.toggle(monitor.serial, col,
-                                                root.cellValue(col - 1, monitor.serial))
-              }
-            }
-
-            // A monitor that answers DDC but lists no input codes cannot be switched
-            // from software at all. Saying so here is the whole of R16: the alternative
-            // is an empty dropdown that looks like a bug in this plugin.
-            Text {
-              anchors.fill: parent
-              visible: col > 0 && monitor && monitor.inputs.length === 0
-              wrapMode: Text.WordWrap
-              text: "No input switching. Check DDC/CI is enabled in this monitor's own menu."
-              color: Qt.darker(Color.foreground, 1.55)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption
-            }
           }
         }
-      }
 
-      RowLayout {
-        Layout.fillWidth: true
-        Button { text: "+ Computer"; onClicked: root.addComputer() }
-        Item { Layout.fillWidth: true }
-        Button { text: "Cancel"; onClicked: root.closed() }
-        Button { text: "Save"; onClicked: root.save() }
+        RowLayout {
+          Layout.fillWidth: true
+          Button { text: "+ Computer"; onClicked: root.addComputer() }
+          Item { Layout.fillWidth: true }
+          Button { text: "Cancel"; onClicked: root.close() }
+          Button { text: "Save"; onClicked: root.save() }
+        }
       }
     }
   }

@@ -87,7 +87,11 @@ Panel {
       refresh()
     }
   }
-  Component.onCompleted: refresh()
+  // No refresh on completion. A bar surface exists per monitor, so this ran
+  // once per screen at every shell start and hot reload - each call is two
+  // `ddcutil detect` passes plus a getvcp per monitor, concurrently on the same
+  // I2C buses. The collapsed widget renders a fixed glyph and shows no state,
+  // and the panel already refreshes in onOpenedChanged, so it bought nothing.
 
   Process {
     id: stateProc

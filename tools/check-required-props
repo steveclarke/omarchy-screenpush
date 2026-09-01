@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""Verify every required property is bound on each Ui component instantiation.
+
+qmllint cannot be trusted for this. On qmllint 6.11.2 the `[required]` check is
+skipped for any object whose subtree contains an inline Component - a
+Repeater/ListView delegate, an explicit Component {}, or an inline
+Loader.sourceComponent. Setup.qml's KeyboardPanel held two Repeaters, so its
+missing `anchorItem` and `bar` were invisible to the gate while a synthetic
+file with the identical defect failed. The symptom is not a misbehaving panel:
+the component never instantiates, so the whole widget is absent from the bar.
+
+This scans the shell's Ui/ directory for `required property` declarations and
+then checks, structurally, that every instantiation binds them.
+"""
+
+import re
+import sys
+from pathlib import Path
+
+# Exactly two spaces: only the file's ROOT object declares properties the
+# caller must supply. Deeper `required property index/modelData` lines belong
+# to nested Repeater delegates and are supplied by the view, not by us.
+DECL = re.compile(r"^  required\s+property\s+\S+\s+(\w+)\s*$")
+
+
+def required_properties(ui_dir):
+    """component name -> set of required property names"""
+    out = {}
+    for path in sorted(ui_dir.glob("*.qml")):
+        names = {m.group(1) for m in (DECL.match(l) for l in path.read_text().splitlines()) if m}
+        if names:
+            out[path.stem] = names
+    return out
+
+
+def block_end(lines, start):
+    """Index of the line closing the object opened on `start`."""
+    depth = 0
+    for i in range(start, len(lines)):
+        depth += lines[i].count("{") - lines[i].count("}")
+        if depth == 0:
+            return i
+    return len(lines) - 1
+
+
+def check(qml_path, required):
+    lines = qml_path.read_text().splitlines()
+    problems = []
+    for component, names in required.items():
+        opener = re.compile(r"^(\s*)" + re.escape(component) + r"\s*\{\s*$")
+        for i, line in enumerate(lines):
+            m = opener.match(line)
+            if not m:
+                continue
+            end = block_end(lines, i)
+            body = lines[i + 1:end + 1]
+            # Only direct bindings count. A nested child's `bar:` is not ours,
+            # so restrict to lines at the object's own binding indent.
+            inner = m.group(1) + "  "
+            bound = set()
+            for b in body:
+                if not b.startswith(inner) or b.startswith(inner + " "):
+                    continue
+                bm = re.match(r"\s*(\w+)\s*:", b)
+                if bm:
+                    bound.add(bm.group(1))
+            for missing in sorted(names - bound):
+                problems.append(
+                    f"{qml_path.name}:{i + 1}: {component} is missing required property "
+                    f"'{missing}' - the component will not instantiate and the widget "
+                    f"will be absent from the bar"
+                )
+    return problems
+
+
+def main():
+    if len(sys.argv) < 3:
+        print("usage: check-required-props <shell-dir> <file.qml>...", file=sys.stderr)
+        return 2
+    ui_dir = Path(sys.argv[1]) / "Ui"
+    if not ui_dir.is_dir():
+        print(f"Error: no Ui directory at {ui_dir}", file=sys.stderr)
+        return 2
+
+    required = required_properties(ui_dir)
+    if not required:
+        print(f"Error: no required properties found in {ui_dir} - scan is broken", file=sys.stderr)
+        return 2
+
+    problems = []
+    for arg in sys.argv[2:]:
+        problems += check(Path(arg), required)
+
+    for p in problems:
+        print(f"Error: {p}")
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

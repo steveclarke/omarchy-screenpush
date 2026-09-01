@@ -66,10 +66,12 @@ main() {
   # cost a working plugin, hidden inside an allowlist entry justified by
   # first-party noise. Anything matching FATAL is a finding whatever class it
   # carries. An allowlist needs a deny list.
-  # A required property left unset only WARNS - the component silently
-  # refuses to build, so the UI it belongs to never appears. That defect
-  # shipped here and read as 'the button does nothing'.
-  local fatal='no matching signal found for handler|Required property .* was not initialized'
+  # NOTE: unset required properties are deliberately NOT in this list. qmllint
+  # cannot be relied on for them - on 6.11.2 the [required] check is skipped
+  # for any object whose subtree holds an inline Component (a Repeater
+  # delegate is enough), which is exactly how Setup.qml shipped without its
+  # anchorItem and bar. check_required_props below handles that structurally.
+  local fatal='no matching signal found for handler'
 
   local bad
   bad=$(printf '%s\n' "$out" | grep -E '^(Error|Warning):' \
@@ -86,7 +88,27 @@ main() {
     echo
     error "unexpected qmllint output above"
   fi
+
+  check_required_props "$@"
   echo "OK"
+}
+
+# Structural check for unset required properties, plus a positive control so
+# the check cannot silently stop working. qmllint's own [required] class is not
+# trustworthy here - see the note in main().
+check_required_props() {
+  local checker="${BASH_SOURCE%/*}/check-required-props"
+  local control="${BASH_SOURCE%/*}/../test/fixtures/missing-required.qml"
+
+  [ -x "$checker" ] || error "missing ${checker}"
+  [ -f "$control" ] || error "missing positive control ${control}"
+
+  # The control is deliberately broken. If it passes, the checker is blind.
+  if "$checker" "$SHELL_DIR" "$control" >/dev/null 2>&1; then
+    error "positive control passed - check-required-props is not detecting anything"
+  fi
+
+  "$checker" "$SHELL_DIR" "$@" || error "unset required properties above"
 }
 
 error() { echo "Error: ${1}" >&2; exit 1; }
