@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+################################################################################
+# monitor-input - send every monitor on this desk to a named computer
+################################################################################
+#
+# OVERVIEW
+# --------
+# Monitors cabled to several computers are switched by setting their DDC/CI
+# input source, instead of menu-diving on each monitor's own OSD. Run it on
+# whichever machine currently owns the screens; DDC keeps answering on a
+# monitor that is displaying some other input, so a machine can always pull
+# the screens back to itself.
+#
+# USAGE
+# -----
+#   monitor-input detect              JSON: monitors present and their inputs
+#   monitor-input state               JSON: this desk, its computers, live input
+#   monitor-input switch <id>         send every monitor to that computer
+#   monitor-input switch <id> --monitor <serial>    just one monitor
+#   monitor-input reachable <id>      exit 0 if that computer answers a ping
+#
+# CONFIGURATION
+# -------------
+# ~/.config/monitor-input/desks.json, written by the Omarchy plugin's setup
+# screen. Nothing here needs hand-editing.
+#
+################################################################################
+
+DESKS=${MONITOR_INPUT_DESKS:-${XDG_CONFIG_HOME:-$HOME/.config}/monitor-input/desks.json}
+
+################################################################################
+# Main Orchestration
+################################################################################
+
+main() {
+  local cmd="${1:-}"
+  shift || true
+
+  require_deps
+
+  case "$cmd" in
+    detect) cmd_detect ;;
+    *)      error "usage: monitor-input detect|state|switch|reachable" ;;
+  esac
+}
+
+################################################################################
+# Helper Functions
+################################################################################
+
+error() { echo "Error: ${1}" >&2; exit 1; }
+
+require_deps() {
+  command -v ddcutil >/dev/null || error "ddcutil not found"
+  command -v jq >/dev/null || error "jq not found"
+}
+
+################################################################################
+# Core Functions
+################################################################################
+
+# Serials of every monitor answering DDC right now, one per line.
+present_serials() {
+  ddcutil detect 2>/dev/null | awk '/Serial number:/ { print $NF }' || true
+}
+
+# The input codes a monitor reports it actually has. Sending a code a panel
+# lacks blacks it with no display left to recover on, so this list is the
+# only source the setup screen ever offers.
+#
+# ddcutil prints them as BARE hex nested under a "Values:" line, not as the
+# 0x-prefixed codes it accepts on the way back in:
+#
+#     Feature: 60 (Input Source)
+#        Values:
+#           0f: DisplayPort-1
+#           11: HDMI-1
+#     Feature: 62 (Audio speaker volume)
+#
+# So the code is re-prefixed and lower-cased here. Everything downstream
+# compares 0x-prefixed lowercase, and a parser that emitted "0f" would make
+# every capability check silently fail closed.
+capabilities_for() {
+  ddcutil --sn "$1" capabilities 2>/dev/null \
+    | awk '
+        /^[[:space:]]*Feature:[[:space:]]*60/ { inblock = 1; next }
+        /^[[:space:]]*Feature:/               { inblock = 0 }
+        inblock && /^[[:space:]]*[0-9a-fA-F][0-9a-fA-F]:/ {
+          code = $1; sub(":", "", code); print "0x" tolower(code)
+        }' || true
+}
+
+cmd_detect() {
+  local serial codes
+  {
+    echo '{"monitors":['
+    local first=1
+    while read -r serial; do
+      [ -n "$serial" ] || continue
+      codes=$(capabilities_for "$serial" | jq -R . | jq -s -c .)
+      [ $first -eq 1 ] || echo ','
+      first=0
+      printf '{"serial":%s,"inputs":%s}' "$(printf '%s' "$serial" | jq -R .)" "$codes"
+    done < <(present_serials)
+    echo ']}'
+  } | jq -c .
+}
+
+################################################################################
+# Script Execution
+################################################################################
+
+main "$@"

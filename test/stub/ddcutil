@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Fake ddcutil for tests. Understands only what the engine calls:
+#   ddcutil detect
+#   ddcutil --sn SERIAL getvcp 60
+#   ddcutil --sn SERIAL setvcp 60 CODE
+#   ddcutil --sn SERIAL capabilities
+# State lives in $STUB_STATE/<serial> (current code) and $STUB_CAPS
+# (lines of "SERIAL code code code"). A serial with no state file is
+# treated as not responding, which is how "monitor asleep" is tested.
+set -uo pipefail
+
+# Guarded with :- so running this stub outside the test fixture fails with a
+# readable message rather than bash's raw "unbound variable".
+: "${STUB_STATE:?stub: STUB_STATE is not set - run this from the bats fixture}"
+: "${STUB_CAPS:?stub: STUB_CAPS is not set - run this from the bats fixture}"
+
+caps_for() { grep "^$1 " "$STUB_CAPS" 2>/dev/null | cut -d' ' -f2- || true; }
+
+if [ "${1:-}" = "detect" ]; then
+  for f in "$STUB_STATE"/*; do
+    [ -e "$f" ] || continue
+    serial=$(basename "$f")
+    printf 'Display %s\n   Serial number: %s\n   Model: STUB MONITOR\n' "$serial" "$serial"
+  done
+  exit 0
+fi
+
+serial="" ; shift_to_cmd=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --sn) serial="$2"; shift 2 ;;
+    *) shift_to_cmd+=("$1"); shift ;;
+  esac
+done
+set -- "${shift_to_cmd[@]}"
+
+state_file="$STUB_STATE/$serial"
+
+case "${1:-}" in
+  getvcp)
+    [ -f "$state_file" ] || { echo "DDC communication failed" >&2; exit 1; }
+    printf 'VCP code 0x60 (Input Source                  ): Input-%s (sl=%s)\n' \
+      "$(sed 's/^0x//' "$state_file")" "$(cat "$state_file")"
+    ;;
+  setvcp)
+    [ -f "$state_file" ] || { echo "DDC communication failed" >&2; exit 1; }
+    echo "$3" > "$state_file"
+    ;;
+  capabilities)
+    codes=$(caps_for "$serial")
+    [ -n "$codes" ] || { echo "DDC communication failed" >&2; exit 1; }
+    # Byte-faithful to real ddcutil: bare hex under "Values:", and a
+    # following Feature line so the parser's block-exit is exercised too.
+    echo "   Feature: 60 (Input Source)"
+    echo "      Values:"
+    for c in $codes; do printf '         %s: Input-%s\n' "${c#0x}" "${c#0x}"; done
+    echo "   Feature: 62 (Audio speaker volume)"
+    ;;
+  *) echo "stub: unhandled args: $*" >&2; exit 2 ;;
+esac
