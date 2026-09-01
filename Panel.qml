@@ -15,9 +15,6 @@ Panel {
   property var deskState: Engine.parseState("")
   property bool busy: false
 
-  readonly property color foreground: bar ? bar.foreground : Color.foreground
-  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-
   function refresh() { stateProc.running = true }
 
   function sendTo(computerId) {
@@ -26,7 +23,18 @@ Panel {
     switchProc.running = true
   }
 
-  onOpenedChanged: if (opened) refresh()
+  function sendMonitorTo(serial, computerId) {
+    busy = true
+    switchProc.command = [root.engine, "switch", computerId, "--monitor", serial]
+    switchProc.running = true
+  }
+
+  // "" is the computer list; a serial is that monitor's computer list.
+  property string submenuSerial: ""
+
+  onOpenedChanged: {
+    if (opened) { submenuSerial = ""; refresh() }
+  }
   Component.onCompleted: refresh()
 
   Process {
@@ -97,7 +105,7 @@ Panel {
         PanelSectionHeader { text: "Send my screens to" }
 
         Repeater {
-          model: root.deskState.computers
+          model: root.submenuSerial === "" ? root.deskState.computers : []
           delegate: Button {
             required property var modelData
             Layout.fillWidth: true
@@ -107,7 +115,44 @@ Panel {
           }
         }
 
-        PanelSeparator { visible: root.deskState.known }
+        // Monitor picker: which screen, then which computer for that screen.
+        Repeater {
+          model: root.submenuSerial === "monitors" ? root.deskState.monitors : []
+          delegate: Button {
+            required property var modelData
+            Layout.fillWidth: true
+            text: modelData.label + "   ›"
+            onClicked: root.submenuSerial = modelData.serial
+          }
+        }
+
+        Repeater {
+          model: (root.submenuSerial !== "" && root.submenuSerial !== "monitors")
+                 ? root.deskState.computers : []
+          delegate: Button {
+            required property var modelData
+            Layout.fillWidth: true
+            enabled: !root.busy
+            text: modelData.label
+            onClicked: root.sendMonitorTo(root.submenuSerial, modelData.id)
+          }
+        }
+
+        PanelSeparator {}
+
+        Button {
+          Layout.fillWidth: true
+          visible: root.submenuSerial === "" && root.deskState.monitors.length > 1
+          text: "Just one screen   ›"
+          onClicked: root.submenuSerial = "monitors"
+        }
+
+        Button {
+          Layout.fillWidth: true
+          visible: root.submenuSerial !== ""
+          text: "‹   Back"
+          onClicked: root.submenuSerial = (root.submenuSerial === "monitors" ? "" : "monitors")
+        }
 
         Button {
           Layout.fillWidth: true

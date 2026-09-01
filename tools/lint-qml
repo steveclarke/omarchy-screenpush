@@ -28,7 +28,13 @@ SHELL_DIR=${OMARCHY_PATH:-/usr/share/omarchy}/shell
 # Warning classes first-party Omarchy plugins emit in quantity. They come from
 # QtObject-typed singletons whose members qmllint cannot see statically, not
 # from anything wrong. Anything OUTSIDE this list is a real finding.
-ALLOWED='unqualified|missing-property|unused-parent'
+#
+# Both entries were measured, not guessed: linting seven first-party panels
+# produces between 16 and 135 of each per file. Keep it that way - an
+# allowlist justified by our own output rather than by first-party output is
+# self-fulfilling, and every entry added without evidence is a class of defect
+# this gate will never report.
+ALLOWED='unqualified|missing-property'
 
 main() {
   [ $# -gt 0 ] || error "usage: tools/lint-qml <file.qml> [...]"
