@@ -49,8 +49,18 @@ Panel {
   // "" is the computer list; a serial is that monitor's computer list.
   property string submenuSerial: ""
 
+  // Every piece of transient state resets here, not just the submenu. A
+  // confirmation left open when the popup is dismissed would otherwise still be
+  // open on the next summon, presenting a stale target the person has since
+  // stopped caring about - and the dialog names a machine, so a half-remembered
+  // "Send anyway" would go somewhere they did not just choose.
   onOpenedChanged: {
-    if (opened) { submenuSerial = ""; refresh() }
+    if (opened) {
+      submenuSerial = ""
+      confirmOpen = false
+      pendingComputer = ""
+      refresh()
+    }
   }
   Component.onCompleted: refresh()
 
