@@ -103,3 +103,39 @@ JSON
   run "$ENGINE" state
   echo "$output" | jq -e '.current == "this"'
 }
+
+@test "switch moves every monitor to the named computer" {
+  save_office_desk
+  run "$ENGINE" switch mac
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_STATE/AAA0001")" = "0x11" ]
+  [ "$(cat "$STUB_STATE/BBB0002")" = "0x11" ]
+}
+
+@test "switch refuses when a monitor is not answering, and moves nothing" {
+  save_office_desk
+  rm "$STUB_STATE/BBB0002"          # second panel asleep
+  run "$ENGINE" switch mac
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not switching"* ]]
+  [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]   # untouched
+}
+
+@test "switch refuses a code the monitor does not report having" {
+  save_office_desk
+  cat > "$STUB_CAPS" <<'CAPS'
+AAA0001 0x0f 0x12
+BBB0002 0x0f 0x11 0x12
+CAPS
+  run "$ENGINE" switch mac
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"does not have input"* ]]
+  [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]
+}
+
+@test "switch rejects an unknown computer id" {
+  save_office_desk
+  run "$ENGINE" switch nosuch
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no computer"* ]]
+}
