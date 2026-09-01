@@ -6,7 +6,11 @@
 #   ddcutil --sn SERIAL capabilities
 # State lives in $STUB_STATE/<serial> (current code) and $STUB_CAPS
 # (lines of "SERIAL code code code"). A serial with no state file is
-# treated as not responding, which is how "monitor asleep" is tested.
+# treated as switched off at the wall - absent from `detect` entirely.
+# A state file containing the literal "UNRESPONSIVE" is detected but
+# silent on getvcp/setvcp, which is how a genuine DDC fault is tested -
+# these are different physical situations and the engine must tell them
+# apart.
 set -uo pipefail
 
 # Guarded with :- so running this stub outside the test fixture fails with a
@@ -39,11 +43,13 @@ state_file="$STUB_STATE/$serial"
 case "${1:-}" in
   getvcp)
     [ -f "$state_file" ] || { echo "DDC communication failed" >&2; exit 1; }
+    [ "$(cat "$state_file")" != "UNRESPONSIVE" ] || { echo "DDC communication failed" >&2; exit 1; }
     printf 'VCP code 0x60 (Input Source                  ): Input-%s (sl=%s)\n' \
       "$(sed 's/^0x//' "$state_file")" "$(cat "$state_file")"
     ;;
   setvcp)
     [ -f "$state_file" ] || { echo "DDC communication failed" >&2; exit 1; }
+    [ "$(cat "$state_file")" != "UNRESPONSIVE" ] || { echo "DDC communication failed" >&2; exit 1; }
     echo "$3" > "$state_file"
     ;;
   capabilities)

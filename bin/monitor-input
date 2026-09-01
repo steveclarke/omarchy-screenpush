@@ -181,10 +181,19 @@ cmd_state() {
       }'
 }
 
-# Every monitor must answer BEFORE any of them moves. Without this a sleeping
+# Every monitor must answer BEFORE any of them moves. Without this a faulty
 # panel fails mid-loop having already moved the others, leaving the desk split
 # across two computers - the state that is hardest to get out of, because the
 # person is now looking at two machines at once and neither has all the screens.
+#
+# "Every monitor" means every monitor `present_serials` lists, which is every
+# monitor that is powered on. It deliberately does NOT mean every monitor the
+# stored desk knows about: desk_json resolves a desk by subset, so a desk whose
+# second screen is switched off still resolves, and that dark screen must not
+# be allowed to veto a switch. DDC cannot distinguish a fault from a power-off,
+# so presence in the display list is the only line available - and it is the
+# right one, because a monitor that is off shows nothing whichever input it is
+# set to.
 verify_all_present() {
   local missing=() serial
   for serial in "$@"; do
@@ -226,30 +235,21 @@ cmd_switch() {
   computer=$(printf '%s' "$desk" | jq -c --arg id "$target" '.computers[] | select(.id == $id)')
   [ -n "$computer" ] || error "no computer called '${target}' on this desk"
 
-  # Driven by the TARGET COMPUTER's own recorded monitors, not by
-  # present_serials. A monitor that has gone quiet (asleep, or the cable
-  # briefly dropped) still needs to be caught by verify_all_present below -
-  # but present_serials only lists what ddcutil detect can see right now, so
-  # a monitor missing from it would otherwise be silently left out of the
-  # switch instead of triggering the refusal this command exists to give.
-  local expected=() serial
+  local pairs=() serial code
   while read -r serial; do
     [ -n "$serial" ] || continue
     if [ -n "$only" ] && [ "$serial" != "$only" ]; then continue; fi
-    expected+=("$serial")
-  done < <(printf '%s' "$computer" | jq -r '.inputs | keys[]')
-
-  [ ${#expected[@]} -gt 0 ] || error "no monitors to switch"
-
-  verify_all_present "${expected[@]}"
-
-  local pairs=() code
-  for serial in "${expected[@]}"; do
     code=$(printf '%s' "$computer" | jq -r --arg s "$serial" '.inputs[$s] // empty')
     [ -n "$code" ] || error "no input recorded for ${serial} on '${target}' - re-run setup"
     pairs+=("$serial" "$code")
-  done
+  done < <(present_serials)
 
+  [ ${#pairs[@]} -gt 0 ] || error "no monitors to switch"
+
+  local serials=()
+  for ((i = 0; i < ${#pairs[@]}; i += 2)); do serials+=("${pairs[i]}"); done
+
+  verify_all_present "${serials[@]}"
   verify_codes "${pairs[@]}"
 
   for ((i = 0; i < ${#pairs[@]}; i += 2)); do

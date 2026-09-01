@@ -112,13 +112,27 @@ JSON
   [ "$(cat "$STUB_STATE/BBB0002")" = "0x11" ]
 }
 
-@test "switch refuses when a monitor is not answering, and moves nothing" {
+@test "switch refuses when a monitor is detected but will not answer" {
   save_office_desk
-  rm "$STUB_STATE/BBB0002"          # second panel asleep
+  # Listed by `detect`, silent on getvcp: a real DDC fault. The desk can see
+  # this monitor, so moving its neighbour without it would split the desk.
+  echo "UNRESPONSIVE" > "$STUB_STATE/BBB0002"
   run "$ENGINE" switch mac
   [ "$status" -ne 0 ]
   [[ "$output" == *"not switching"* ]]
   [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]   # untouched
+}
+
+@test "switch proceeds when a monitor is switched off at the wall" {
+  save_office_desk
+  # Off at the wall: absent from `detect` entirely, so it is not part of the
+  # desk right now. Refusing here would mean nobody who turns a screen off can
+  # ever change computers, which is worse than the split this guard prevents -
+  # a dark screen shows nothing either way.
+  rm "$STUB_STATE/BBB0002"
+  run "$ENGINE" switch mac
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_STATE/AAA0001")" = "0x11" ]
 }
 
 @test "switch refuses a code the monitor does not report having" {
