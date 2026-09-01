@@ -187,4 +187,10 @@ CAPS
 JSON
   run "$ENGINE" reachable mac
   [ "$status" -ne 0 ]
+  # A bare non-zero exit is not enough: an unimplemented subcommand exits
+  # non-zero too, by printing a usage error, so this test passed before
+  # `reachable` existed at all. cmd_reachable is silent on both paths and
+  # returns ping's own status, so an empty output is what distinguishes a
+  # real unreachable host from the command simply not being there.
+  [ -z "$output" ]
 }
