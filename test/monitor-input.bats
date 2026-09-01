@@ -271,3 +271,20 @@ JSON
   run jq -e '.desks["OTHER1+OTHER2"].label == "Studio"' "$XDG_CONFIG_HOME/monitor-input/desks.json"
   [ "$status" -eq 0 ]
 }
+
+@test "switch-raw sets one panel to a literal code" {
+  run "$ENGINE" switch-raw AAA0001 0x11
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_STATE/AAA0001")" = "0x11" ]
+  [ "$(cat "$STUB_STATE/BBB0002")" = "0x0f" ]
+}
+
+@test "switch-raw refuses a code the panel lacks" {
+  cat > "$STUB_CAPS" <<'CAPS'
+AAA0001 0x0f 0x12
+BBB0002 0x0f 0x11 0x12
+CAPS
+  run "$ENGINE" switch-raw AAA0001 0x11
+  [ "$status" -ne 0 ]
+  [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]
+}

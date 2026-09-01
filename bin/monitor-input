@@ -19,6 +19,7 @@ set -euo pipefail
 #   monitor-input state               JSON: this desk, its computers, live input
 #   monitor-input switch <id>         send every monitor to that computer
 #   monitor-input switch <id> --monitor <serial>    just one monitor
+#   monitor-input switch-raw <serial> <code>  send one monitor to a literal code
 #   monitor-input reachable <id>      exit 0 if that computer answers a ping
 #
 # CONFIGURATION
@@ -47,9 +48,10 @@ main() {
     detect) cmd_detect ;;
     state)  cmd_state ;;
     switch) cmd_switch "$@" ;;
+    switch-raw) cmd_switch_raw "$@" ;;
     reachable) cmd_reachable "$@" ;;
     save-desk) cmd_save_desk ;;
-    *)      error "usage: monitor-input detect|state|switch|reachable|save-desk" ;;
+    *)      error "usage: monitor-input detect|state|switch|switch-raw|reachable|save-desk" ;;
   esac
 }
 
@@ -282,6 +284,22 @@ cmd_switch() {
   done
 }
 
+# Set one monitor to a literal code. Used by the setup screen's "Try it",
+# where the value being tested has not been saved to any computer yet.
+# Capability checking is kept: an unsupported code blacks the panel whether
+# or not it came from a saved desk.
+cmd_switch_raw() {
+  local serial="${1:-}" code="${2:-}"
+  [ -n "$serial" ] || error "usage: monitor-input switch-raw <serial> <code>"
+  [ -n "$code" ] || error "usage: monitor-input switch-raw <serial> <code>"
+
+  verify_all_present "$serial"
+  verify_codes "$serial" "$code"
+
+  ddcutil --sn "$serial" setvcp 60 "$code" \
+    || error "could not set input on ${serial} - recover with the monitor's own menu"
+}
+
 # A computer that is off still has a named input, and sending the screens
 # there is a black desk. This is advisory only: the answer drives a
 # confirmation, never a refusal, because wanting to wake a machine by
@@ -294,7 +312,7 @@ cmd_reachable() {
   desk=$(desk_json "$(desk_key)")
   [ "$desk" != "null" ] || error "this desk has not been set up yet"
 
-  host=$(printf '%s' "$desk" | jq -r --arg id "$target" '.computers[] | select(.id == $id) | .host // ""')
+  host=$(printf '%s' "$desk" | jq -r --arg id "$target" '[.computers[] | select(.id == $id)][0].host // ""')
   [ -n "$host" ] || return 0
 
   ping -c 1 -W 1 "$host" >/dev/null 2>&1
