@@ -170,6 +170,10 @@ BBB0002 0x0f 0x11 0x12
 CAPS
   run "$ENGINE" switch mac --monitor AAA0001
   [ "$status" -ne 0 ]
+  # Assert the reason, not just the failure. A missing subcommand also exits
+  # non-zero and also leaves the panel alone, so without this the test passes
+  # against an engine that cannot switch at all.
+  [[ "$output" == *"does not have input"* ]]
   [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]
 }
 
@@ -218,6 +222,10 @@ JSON
 JSON
   run bash -c "echo 'not json' | '$ENGINE' save-desk"
   [ "$status" -ne 0 ]
+  # Assert the reason. An unimplemented `save-desk` exits non-zero too, and
+  # also leaves the file untouched, so the survival check below passes either
+  # way - this line is what makes the test about JSON validation.
+  [[ "$output" == *"not valid JSON"* ]]
   run jq -e '.desks["OTHER1+OTHER2"].label == "Studio"' "$XDG_CONFIG_HOME/monitor-input/desks.json"
   [ "$status" -eq 0 ]
 }
