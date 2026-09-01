@@ -266,7 +266,10 @@ cmd_switch() {
     [ -n "$serial" ] || continue
     if [ -n "$only" ] && [ "$serial" != "$only" ]; then continue; fi
     code=$(printf '%s' "$computer" | jq -r --arg s "$serial" '.inputs[$s] // empty')
-    [ -n "$code" ] || error "no input recorded for ${serial} on '${target}' - re-run setup"
+    # A monitor with no recorded input for this computer is one that cannot be
+    # switched, or one added since setup. Skipping keeps the rest of the desk
+    # working; refusing would make one unswitchable panel disable the product.
+    [ -n "$code" ] || continue
     pairs+=("$serial" "$code")
   done < <(present_serials)
 

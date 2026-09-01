@@ -180,6 +180,16 @@ Item {
 
       PanelSectionHeader { text: "Which input is each computer plugged into?" }
 
+      Text {
+        Layout.fillWidth: true
+        visible: root.monitors.filter(function(m) { return m.inputs.length === 0 }).length > 0
+        wrapMode: Text.WordWrap
+        text: "Some monitors here cannot be switched from software. They will keep "
+              + "showing whatever they are on now."
+        color: Color.urgent
+        font.family: Style.font.family
+      }
+
       GridLayout {
         columns: root.computers.length + 1
         columnSpacing: Style.space(12)
@@ -228,7 +238,7 @@ Item {
 
             ColumnLayout {
               anchors.fill: parent
-              visible: col > 0
+              visible: col > 0 && monitor && monitor.inputs.length > 0
               spacing: Style.space(2)
 
               Dropdown {
@@ -248,6 +258,19 @@ Item {
                 onClicked: tryController.toggle(monitor.serial, col,
                                                 root.cellValue(col - 1, monitor.serial))
               }
+            }
+
+            // A monitor that answers DDC but lists no input codes cannot be switched
+            // from software at all. Saying so here is the whole of R16: the alternative
+            // is an empty dropdown that looks like a bug in this plugin.
+            Text {
+              anchors.fill: parent
+              visible: col > 0 && monitor && monitor.inputs.length === 0
+              wrapMode: Text.WordWrap
+              text: "No input switching. Check DDC/CI is enabled in this monitor's own menu."
+              color: Qt.darker(Color.foreground, 1.55)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
             }
           }
         }

@@ -288,3 +288,24 @@ CAPS
   [ "$status" -ne 0 ]
   [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]
 }
+
+@test "detect reports a monitor with no input capabilities as an empty list" {
+  cat > "$STUB_CAPS" <<'CAPS'
+AAA0001 0x0f 0x11 0x12
+CAPS
+  run "$ENGINE" detect
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.monitors[] | select(.serial == "BBB0002") | .inputs == []'
+}
+
+@test "switch skips a monitor with no recorded input and moves the rest" {
+  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+{"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office","monitors":[],
+ "computers":[{"id":"mac","label":"Mac","host":null,
+               "inputs":{"AAA0001":"0x11"}}]}}}
+JSON
+  run "$ENGINE" switch mac
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_STATE/AAA0001")" = "0x11" ]
+  [ "$(cat "$STUB_STATE/BBB0002")" = "0x0f" ]
+}
