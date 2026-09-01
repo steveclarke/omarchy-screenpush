@@ -194,3 +194,30 @@ JSON
   # real unreachable host from the command simply not being there.
   [ -z "$output" ]
 }
+
+@test "save-desk creates desks.json when there is none" {
+  echo '{"label":"Office","monitors":[],"computers":[]}' | "$ENGINE" save-desk
+  run jq -e '.desks["AAA0001+BBB0002"].label == "Office"' "$XDG_CONFIG_HOME/monitor-input/desks.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "save-desk leaves other desks alone" {
+  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+{"version":1,"desks":{"OTHER1+OTHER2":{"label":"Studio","monitors":[],"computers":[]}}}
+JSON
+  echo '{"label":"Office","monitors":[],"computers":[]}' | "$ENGINE" save-desk
+  run jq -e '.desks | keys | length == 2' "$XDG_CONFIG_HOME/monitor-input/desks.json"
+  [ "$status" -eq 0 ]
+  run jq -e '.desks["OTHER1+OTHER2"].label == "Studio"' "$XDG_CONFIG_HOME/monitor-input/desks.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "save-desk rejects malformed json rather than truncating the file" {
+  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+{"version":1,"desks":{"OTHER1+OTHER2":{"label":"Studio","monitors":[],"computers":[]}}}
+JSON
+  run bash -c "echo 'not json' | '$ENGINE' save-desk"
+  [ "$status" -ne 0 ]
+  run jq -e '.desks["OTHER1+OTHER2"].label == "Studio"' "$XDG_CONFIG_HOME/monitor-input/desks.json"
+  [ "$status" -eq 0 ]
+}
