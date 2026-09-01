@@ -139,6 +139,18 @@ read_input() {
 # Which configured computer matches what every monitor is showing. Null when
 # the desk is split across computers, which is a real state after a partial
 # manual change on the monitor's own menu.
+#
+# The comparison iterates the COMPUTER's inputs, not the live map, and that
+# direction is the whole point. Iterating live only checks the monitors that
+# answered, so a desk with one panel asleep would match a computer on the
+# strength of the other panel alone - and confidently report the wrong machine
+# while the sleeping panel sits on a different one. Walking the computer's own
+# inputs means every monitor it claims must be present AND matching, so an
+# unanswered monitor yields null: honest, rather than wrong.
+#
+# The length guard matters too: a computer added in the setup grid but not yet
+# filled in has an empty inputs map, and `all` over an empty list is true, so
+# without it every blank computer would match everything.
 cmd_state() {
   local key desk live
   key=$(desk_key)
@@ -158,7 +170,9 @@ cmd_state() {
           if ($live | length) == 0 then null
           else
             [ $computers[]
-              | select(. as $c | ($live | to_entries | map($c.inputs[.key] == .value) | all))
+              | select(. as $c
+                  | ($c.inputs | length) > 0
+                    and ($c.inputs | to_entries | map($live[.key] == .value) | all))
               | .id
             ] | first // null
           end

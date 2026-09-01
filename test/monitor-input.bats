@@ -44,6 +44,26 @@ JSON
   echo "$output" | jq -e '.live["AAA0001"] == "0x0f"'
 }
 
+@test "state reports no current computer while a monitor is not answering" {
+  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+{"version":1,"desks":{"AAA0001":{"label":"Office","monitors":[],
+ "computers":[{"id":"this","label":"This machine","host":null,
+               "inputs":{"AAA0001":"0x0f","BBB0002":"0x0f"}},
+              {"id":"mac","label":"Mac","host":null,
+               "inputs":{"AAA0001":"0x11","BBB0002":"0x11"}}]}}}
+JSON
+  # Keyed "AAA0001", not "AAA0001+BBB0002": desk_key is built from the serials
+  # PRESENT, and with one panel asleep only one is present. Keying it this way
+  # is what makes the desk resolve, so the test actually exercises `current`
+  # rather than passing because the desk was never found.
+  # Second panel asleep. Its input is unknowable, so the honest answer is
+  # "I cannot tell" - not "this", inferred from the one panel still talking.
+  rm "$STUB_STATE/BBB0002"
+  run "$ENGINE" state
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.current == null'
+}
+
 @test "state marks which computer is currently on screen" {
   cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
 {"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office","monitors":[],
