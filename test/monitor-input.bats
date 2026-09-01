@@ -153,3 +153,38 @@ CAPS
   [ "$status" -ne 0 ]
   [[ "$output" == *"no computer"* ]]
 }
+
+@test "switch --monitor moves only that panel" {
+  save_office_desk
+  run "$ENGINE" switch mac --monitor AAA0001
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_STATE/AAA0001")" = "0x11" ]
+  [ "$(cat "$STUB_STATE/BBB0002")" = "0x0f" ]
+}
+
+@test "switch --monitor still refuses a code that panel lacks" {
+  save_office_desk
+  cat > "$STUB_CAPS" <<'CAPS'
+AAA0001 0x0f 0x12
+BBB0002 0x0f 0x11 0x12
+CAPS
+  run "$ENGINE" switch mac --monitor AAA0001
+  [ "$status" -ne 0 ]
+  [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]
+}
+
+@test "reachable succeeds when the computer has no host recorded" {
+  save_office_desk
+  run "$ENGINE" reachable mac
+  [ "$status" -eq 0 ]
+}
+
+@test "reachable fails when the host does not answer" {
+  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+{"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office","monitors":[],
+ "computers":[{"id":"mac","label":"Mac","host":"192.0.2.1",
+               "inputs":{"AAA0001":"0x11","BBB0002":"0x11"}}]}}}
+JSON
+  run "$ENGINE" reachable mac
+  [ "$status" -ne 0 ]
+}
