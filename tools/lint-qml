@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+################################################################################
+# lint-qml - type-check this plugin's QML against Omarchy's shell modules
+################################################################################
+#
+# USAGE
+# -----
+#   tools/lint-qml Panel.qml [more.qml ...]
+#
+# Prints OK and exits 0 when clean. Prints the linter's own output and exits 1
+# otherwise.
+#
+# WHY THIS EXISTS
+# ---------------
+# `qmllint -I "$OMARCHY_PATH/shell" Panel.qml` looks right and is useless:
+# /usr/bin/qmllint is Qt 5 and exits 255 silently on Quickshell QML, and even
+# the Qt 6 binary cannot resolve `qs.Ui` from the shell root, because the
+# module is declared `qs.Ui` inside a plain `Ui/` directory. This builds the
+# qs/ namespace qmllint expects, in a temp dir, and points it there.
+#
+################################################################################
+
+QMLLINT=${QMLLINT:-/usr/lib/qt6/bin/qmllint}
+SHELL_DIR=${OMARCHY_PATH:-/usr/share/omarchy}/shell
+
+# Warning classes first-party Omarchy plugins emit in quantity. They come from
+# QtObject-typed singletons whose members qmllint cannot see statically, not
+# from anything wrong. Anything OUTSIDE this list is a real finding.
+ALLOWED='unqualified|missing-property|unused-parent'
+
+main() {
+  [ $# -gt 0 ] || error "usage: tools/lint-qml <file.qml> [...]"
+  require_tools
+
+  # Not `local`: the EXIT trap fires after main() returns, at global scope,
+  # and under `set -u` a local variable read there is unbound.
+  work=$(mktemp -d)
+  trap 'rm -rf "$work"' EXIT
+  build_namespace "$work"
+
+  local out
+  out=$("$QMLLINT" -I "$work" "$@" 2>&1) || true
+
+  local bad
+  bad=$(printf '%s\n' "$out" | grep -E '^(Error|Warning):' \
+        | grep -vE "\[($ALLOWED)\]$" || true)
+
+  if [ -n "$bad" ]; then
+    printf '%s\n' "$out"
+    echo
+    error "unexpected qmllint output above"
+  fi
+  echo "OK"
+}
+
+error() { echo "Error: ${1}" >&2; exit 1; }
+
+require_tools() {
+  [ -x "$QMLLINT" ] \
+    || error "no Qt6 qmllint at ${QMLLINT}. /usr/bin/qmllint is Qt5 and silently passes everything - do not fall back to it."
+  [ -d "$SHELL_DIR/Ui" ] || error "no Omarchy shell modules at ${SHELL_DIR}"
+}
+
+# qmllint resolves `qs.Ui` by looking for <importpath>/qs/Ui/qmldir, so give
+# it exactly that, as symlinks into the real shell directory.
+build_namespace() {
+  mkdir -p "$1/qs"
+  local dir
+  for dir in "$SHELL_DIR"/*/; do
+    [ -f "${dir}qmldir" ] || continue
+    ln -s "${dir%/}" "$1/qs/$(basename "$dir")"
+  done
+}
+
+main "$@"
