@@ -66,13 +66,19 @@ main() {
   # cost a working plugin, hidden inside an allowlist entry justified by
   # first-party noise. Anything matching FATAL is a finding whatever class it
   # carries. An allowlist needs a deny list.
-  local fatal='no matching signal found for handler'
+  # A required property left unset only WARNS - the component silently
+  # refuses to build, so the UI it belongs to never appears. That defect
+  # shipped here and read as 'the button does nothing'.
+  local fatal='no matching signal found for handler|Required property .* was not initialized'
 
   local bad
   bad=$(printf '%s\n' "$out" | grep -E '^(Error|Warning):' \
         | grep -vE "\[($ALLOWED)\]$" \
         | grep -vF "$TOLERATED" || true)
-  bad="${bad}"$'\n'"$(printf '%s\n' "$out" | grep -F "$fatal" || true)"
+  # -E, not -F: `fatal` is an alternation of patterns. A fixed-string match
+  # here silently matches nothing, which is how a deny-list quietly stops
+  # denying anything.
+  bad="${bad}"$'\n'"$(printf '%s\n' "$out" | grep -E "$fatal" || true)"
   bad=$(printf '%s' "$bad" | grep -v '^[[:space:]]*$' || true)
 
   if [ -n "$bad" ]; then

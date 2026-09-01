@@ -258,6 +258,11 @@ Panel {
     source: Qt.resolvedUrl("Setup.qml")
     onLoaded: {
       item.engine = root.engine
+      // KeyboardPanel positions itself against the bar icon, so Setup needs
+      // both the anchor and the bar host. Without them it warns and never
+      // builds, which reads as "the button does nothing".
+      item.anchorItem = button
+      item.bar = root.bar
       item.closed.connect(function() { setupLoader.active = false; root.refresh() })
       item.open()
     }

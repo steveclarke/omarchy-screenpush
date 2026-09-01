@@ -12,6 +12,13 @@ Item {
   property string engine: ""
   signal closed()
 
+  // KeyboardPanel declares `anchorItem` and `bar` as required properties: it
+  // positions its card relative to the bar icon that opened it. Leaving them
+  // unset does not error, it just warns and refuses to build the component -
+  // so the panel silently never appears. Panel.qml supplies both on load.
+  property Item anchorItem: null
+  property QtObject bar: null
+
   // [{serial, label, model, inputs: ["0x0f", ...]}]
   property var monitors: []
   // [{id, label, host, inputs: {serial: code}}]
@@ -192,6 +199,8 @@ Item {
   KeyboardPanel {
     id: sheet
     owner: root
+    anchorItem: root.anchorItem
+    bar: root.bar
     open: true
     contentWidth: Style.space(220) + root.computers.length * Style.space(180)
     contentHeight: Style.space(140) + root.monitors.length * Style.space(64)
