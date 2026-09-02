@@ -173,7 +173,11 @@ Panel {
     // Opening setup without going through the menu. Worth having on its own
     // terms - it gives the setup sheet a bindable entry point - and it is the
     // only way to reach the sheet without a pointer.
-    function setup(): void { root.close(); setupLoader.active = true }
+    function setup(): void {
+      root.close()
+      if (setupLoader.active && setupLoader.item) setupLoader.item.open()
+      else setupLoader.active = true
+    }
     function send(id: string): string { root.sendTo(id); return "ok" }
   }
 
@@ -270,7 +274,11 @@ Panel {
         Button {
           Layout.fillWidth: true
           text: root.deskState.known ? "Set up this desk..." : "Set up this desk"
-          onClicked: { root.close(); setupLoader.active = true }
+          onClicked: {
+            root.close()
+            if (setupLoader.active && setupLoader.item) setupLoader.item.open()
+            else setupLoader.active = true
+          }
         }
       }
 
@@ -329,7 +337,11 @@ Panel {
       // builds, which reads as "the button does nothing".
       item.anchorItem = button
       item.bar = root.bar
-      item.closed.connect(function() { setupLoader.active = false; root.refresh() })
+      // Deliberately NOT deactivating the Loader here. active = false destroys
+      // the item and every property on it, which is the whole half-filled
+      // grid. Closing hides the card; the draft stays in memory for the next
+      // open. It costs one idle QML object and saves the person's work.
+      item.closed.connect(function() { root.refresh() })
       item.open()
     }
   }

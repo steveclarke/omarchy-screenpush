@@ -25,14 +25,27 @@ Item {
   property var computers: []
   property string deskLabel: ""
 
-  function open() { detectProc.running = true }
+  // Whether the card is showing. Open and close used to mean build and
+  // destroy: Panel.qml deactivated the Loader on close, which took the whole
+  // half-filled grid with it. One click outside and the work was gone. The
+  // draft now outlives the card - hyprmoncfg has the same property for the
+  // same reason, by keeping its editor state in a backend the panel queries
+  // on open rather than in the panel itself.
+  property bool sheetOpen: false
+
+  function open() {
+    // Already loaded: show what is there rather than re-detecting, which
+    // would also overwrite whatever was typed.
+    if (monitors.length > 0) { sheetOpen = true; return }
+    detectProc.running = true
+  }
 
   // KeyboardPanel.close() calls owner.close() if the owner has one, and
   // Bar.requestPopout() closes a displaced popup through closeForPopoutSwitch
   // or close. Without this function neither finds anything: the sheet vanishes
   // without emitting closed(), Panel.qml's Loader stays active, onLoaded never
   // re-fires, and "Set up this desk" is dead for the rest of the session.
-  function close() { root.closed() }
+  function close() { sheetOpen = false; root.closed() }
 
   // Human names for the codes the hardware reports, so a cell reads
   // "HDMI 1" rather than "0x11". Anything unrecognised falls through as
@@ -172,6 +185,7 @@ Item {
               return m
             })
           }
+          root.sheetOpen = true
           return
         }
 
@@ -183,6 +197,10 @@ Item {
         for (var serial in live) mine.inputs[serial] = live[serial]
         root.computers = [mine]
         root.addComputer()
+        // Only now. Showing the card before detect and state have answered
+        // meant it mapped nearly empty and then jumped to full size as the
+        // rows arrived - the shift you see on open.
+        root.sheetOpen = true
       }
     }
   }
@@ -213,7 +231,7 @@ Item {
     owner: root
     anchorItem: root.anchorItem
     bar: root.bar
-    open: true
+    open: root.sheetOpen
     // centerOnBar because this sheet is far wider than the bar icon it hangs
     // off; anchored to the icon it would sit half off-screen near an edge.
     centerOnBar: true
