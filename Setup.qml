@@ -242,7 +242,7 @@ Item {
     // fitted* clamps to the screen and adds the border+padding inset. The
     // hand-rolled arithmetic this replaces ran the card off the right edge
     // once enough computers were added, taking the Save button with it.
-    contentWidth: sheet.fittedContentWidth(Style.space(300) + root.computers.length * Style.space(260))
+    contentWidth: sheet.fittedContentWidth(Style.space(260) + root.computers.length * Style.space(266))
     contentHeight: sheet.fittedContentHeight(column.implicitHeight, Style.space(520))
 
     PanelKeyCatcher {
@@ -267,107 +267,163 @@ Item {
           font.family: Style.font.family
         }
 
-        GridLayout {
-          columns: root.computers.length + 1
-          columnSpacing: Style.space(12)
-          rowSpacing: Style.space(8)
+        // Column widths, shared by the header row and every monitor row so
+        // the grid lines up without a GridLayout's index arithmetic.
+        readonly property int gutterWidth: Style.space(220)
+        readonly property int computerWidth: Style.space(250)
+        readonly property int columnGap: Style.space(16)
 
-          Item { Layout.preferredWidth: Style.space(280) }
+        Text {
+          Layout.fillWidth: true
+          wrapMode: Text.WordWrap
+          text: "For each screen, pick the input it shows when that computer has it. "
+                + "Try it switches the screen right now so you can check."
+          color: Qt.darker(Color.foreground, 1.4)
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+        }
+
+        PanelSeparator { Layout.fillWidth: true }
+
+        // Computer columns: a name and an optional hostname, labelled, so an
+        // editable field no longer masquerades as a column header.
+        RowLayout {
+          spacing: column.columnGap
+          Item { Layout.preferredWidth: column.gutterWidth; Layout.minimumWidth: column.gutterWidth }
 
           Repeater {
             model: root.computers.length
-            delegate: ColumnLayout {
+            delegate: GridLayout {
               required property int index
-              Layout.preferredWidth: Style.space(240)
-              spacing: Style.space(2)
+              Layout.preferredWidth: column.computerWidth
+              Layout.minimumWidth: column.computerWidth
+              columns: 2
+              columnSpacing: Style.space(8)
+              rowSpacing: Style.space(4)
 
-              // Seeded once rather than bound. `text:` as a binding on a model
-              // the handler writes back to is a loop: setLabel mutates
-              // computers, the binding re-evaluates, textChanged fires again.
-              // Qt reports it as "Binding loop detected for property text".
-              // onTextEdited (not onTextChanged) fires only for real typing,
-              // so a programmatic reseed cannot re-enter it either.
+              Text {
+                text: "Name"
+                color: Qt.darker(Color.foreground, 1.4)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+              }
+              // Seeded once rather than bound: a `text:` binding on a model the
+              // handler writes back to is a loop. onTextEdited fires only for
+              // real typing, so a programmatic reseed cannot re-enter it.
               TextField {
                 Layout.fillWidth: true
                 Component.onCompleted: text = root.computers[index].label
                 onTextEdited: root.setLabel(index, text)
               }
 
+              Text {
+                text: "Host"
+                color: Qt.darker(Color.foreground, 1.4)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+              }
               TextField {
                 Layout.fillWidth: true
-                placeholderText: "Hostname (optional)"
+                placeholderText: "optional"
                 Component.onCompleted: text = root.computers[index].host || ""
                 onTextEdited: root.setHost(index, text)
               }
             }
           }
+        }
 
-          Repeater {
-            model: root.monitors.length * (root.computers.length + 1)
-            delegate: Item {
-              required property int index
-              readonly property int columns: root.computers.length + 1
-              readonly property int row: Math.floor(index / columns)
-              readonly property int col: index % columns
-              readonly property var monitor: root.monitors[row]
+        PanelSeparator { Layout.fillWidth: true }
 
-              Layout.preferredWidth: col === 0 ? Style.space(200) : Style.space(160)
-              Layout.preferredHeight: Style.space(56)
+        // One row per screen, separated by a hairline so two screens read as
+        // two things. The Try button sits on the dropdown's line rather than
+        // under it, so each cell is one line high.
+        Repeater {
+          model: root.monitors.length
+          delegate: ColumnLayout {
+            id: monitorRow
+            required property int index
+            readonly property var monitor: root.monitors[index]
+            Layout.fillWidth: true
+            spacing: Style.space(8)
+
+            RowLayout {
+              spacing: column.columnGap
 
               ColumnLayout {
-                anchors.fill: parent
-                visible: col === 0
+                Layout.preferredWidth: column.gutterWidth
+                Layout.minimumWidth: column.gutterWidth
+                Layout.alignment: Qt.AlignVCenter
                 spacing: 0
                 Text {
-                  text: monitor ? monitor.label : ""
+                  text: monitorRow.monitor ? monitorRow.monitor.label : ""
                   color: Color.foreground
                   font.family: Style.font.family
                 }
                 Text {
-                  text: monitor ? monitor.model : ""
+                  text: monitorRow.monitor ? monitorRow.monitor.model : ""
                   color: Qt.darker(Color.foreground, 1.55)
                   font.family: Style.font.family
                   font.pixelSize: Style.font.caption
                 }
               }
 
-              ColumnLayout {
-                anchors.fill: parent
-                visible: col > 0 && monitor && monitor.inputs.length > 0
-                spacing: Style.space(2)
+              Repeater {
+                model: root.computers.length
+                delegate: Item {
+                  id: cell
+                  required property int index
+                  readonly property int col: index + 1
+                  readonly property var monitor: monitorRow.monitor
+                  readonly property bool switchable: monitor && monitor.inputs.length > 0
+                  readonly property bool trying: tryController.serial === (monitor ? monitor.serial : "")
+                                                 && tryController.column === col
+                  Layout.preferredWidth: column.computerWidth
+                  Layout.minimumWidth: column.computerWidth
+                  implicitHeight: switchable ? cellRow.implicitHeight : noSwitch.implicitHeight
 
-                Dropdown {
-                  Layout.fillWidth: true
-                  showLabel: false
-                  options: monitor ? root.optionsFor(monitor.serial) : []
-                  value: monitor ? root.cellValue(col - 1, monitor.serial) : ""
-                  onChanged: function(v) { if (monitor) root.setCell(col - 1, monitor.serial, v) }
+                  RowLayout {
+                    id: cellRow
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    visible: cell.switchable
+                    spacing: Style.space(6)
+
+                    Dropdown {
+                      Layout.fillWidth: true
+                      showLabel: false
+                      options: cell.monitor ? root.optionsFor(cell.monitor.serial) : []
+                      value: cell.monitor ? root.cellValue(cell.col - 1, cell.monitor.serial) : ""
+                      onChanged: function(v) { if (cell.monitor) root.setCell(cell.col - 1, cell.monitor.serial, v) }
+                    }
+
+                    Button {
+                      Layout.preferredWidth: Style.space(44)
+                      text: cell.trying ? "\u{f0e2}" : "\u{f04b}"
+                      enabled: cell.monitor && root.cellValue(cell.col - 1, cell.monitor.serial) !== ""
+                      onClicked: tryController.toggle(cell.monitor.serial, cell.col,
+                                                      root.cellValue(cell.col - 1, cell.monitor.serial))
+                    }
+                  }
+
+                  // A monitor that answers DDC but lists no input codes cannot be
+                  // switched from software. Saying so is the whole of R16: the
+                  // alternative is an empty dropdown that looks like a bug here.
+                  Text {
+                    id: noSwitch
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    visible: !cell.switchable
+                    wrapMode: Text.WordWrap
+                    text: "No input switching. Check DDC/CI is enabled in this monitor's own menu."
+                    color: Qt.darker(Color.foreground, 1.55)
+                    font.family: Style.font.family
+                    font.pixelSize: Style.font.caption
+                  }
                 }
-
-                Button {
-                  Layout.fillWidth: true
-                  text: tryController.serial === (monitor ? monitor.serial : "")
-                        && tryController.column === col
-                        ? "Bring it back" : "Try it"
-                  enabled: monitor && root.cellValue(col - 1, monitor.serial) !== ""
-                  onClicked: tryController.toggle(monitor.serial, col,
-                                                  root.cellValue(col - 1, monitor.serial))
-                }
-              }
-
-              // A monitor that answers DDC but lists no input codes cannot be switched
-              // from software at all. Saying so here is the whole of R16: the alternative
-              // is an empty dropdown that looks like a bug in this plugin.
-              Text {
-                anchors.fill: parent
-                visible: col > 0 && monitor && monitor.inputs.length === 0
-                wrapMode: Text.WordWrap
-                text: "No input switching. Check DDC/CI is enabled in this monitor's own menu."
-                color: Qt.darker(Color.foreground, 1.55)
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
               }
             }
+
+            PanelSeparator { Layout.fillWidth: true }
           }
         }
 
