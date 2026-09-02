@@ -85,6 +85,16 @@ Item {
     computers = next
   }
 
+  // Removing the only computer would leave nothing to switch to and no way
+  // to add one back with a sensible default, so the last column stays.
+  function removeComputer(computerIndex) {
+    if (computers.length <= 1) return
+    if (tryController.column === computerIndex + 1) tryController.revert()
+    var next = JSON.parse(JSON.stringify(computers))
+    next.splice(computerIndex, 1)
+    computers = next
+  }
+
   function setLabel(computerIndex, text) {
     var next = JSON.parse(JSON.stringify(computers))
     next[computerIndex].label = text
@@ -310,10 +320,20 @@ Item {
               // Seeded once rather than bound: a `text:` binding on a model the
               // handler writes back to is a loop. onTextEdited fires only for
               // real typing, so a programmatic reseed cannot re-enter it.
-              TextField {
+              RowLayout {
                 Layout.fillWidth: true
-                Component.onCompleted: text = root.computers[index].label
-                onTextEdited: root.setLabel(index, text)
+                spacing: Style.space(6)
+                TextField {
+                  Layout.fillWidth: true
+                  Component.onCompleted: text = root.computers[index].label
+                  onTextEdited: root.setLabel(index, text)
+                }
+                Button {
+                  Layout.preferredWidth: Style.space(32)
+                  text: "\u{f00d}"
+                  enabled: root.computers.length > 1
+                  onClicked: root.removeComputer(index)
+                }
               }
 
               Text {
