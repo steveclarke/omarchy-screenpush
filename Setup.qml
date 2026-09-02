@@ -19,6 +19,12 @@ Item {
   property Item anchorItem: null
   property QtObject bar: null
 
+  // The bar's own foreground and font, so the sheet matches every other panel
+  // on this theme. `bar` is injected after load, hence the guards.
+  readonly property color fg: bar ? bar.foreground : Color.foreground
+  readonly property color dim: Qt.darker(fg, 1.4)
+  readonly property string ff: bar ? bar.fontFamily : Style.font.family
+
   // [{serial, label, model, inputs: ["0x0f", ...]}]
   property var monitors: []
   // [{id, label, host, inputs: {serial: code}}]
@@ -263,37 +269,47 @@ Item {
       ColumnLayout {
         id: column
         anchors.fill: parent
-        spacing: Style.space(8)
+        spacing: Style.space(12)
 
-        PanelSectionHeader { text: "Which input is each computer plugged into?" }
+        // Same hero every first-party panel opens with: icon, title, and a
+        // small-caps status line. Here the status is what this sheet is for.
+        PanelHero {
+          Layout.fillWidth: true
+          foreground: root.fg
+          fontFamily: root.ff
+          title: "Monitor input"
+          meta: (root.deskLabel !== "" ? root.deskLabel : "This desk").toUpperCase()
+          detail: root.monitors.length + (root.monitors.length === 1 ? " screen" : " screens")
+                  + " · " + root.computers.length + (root.computers.length === 1 ? " computer" : " computers")
+          iconComponent: Component {
+            Text {
+              text: "\u{f04e1}"
+              color: root.fg
+              font.family: root.ff
+              font.pixelSize: Style.font.display
+            }
+          }
+        }
 
         Text {
           Layout.fillWidth: true
           visible: root.monitors.filter(function(m) { return m.inputs.length === 0 }).length > 0
           wrapMode: Text.WordWrap
-          text: "Some monitors here cannot be switched from software. They will keep "
+          text: "Some screens here cannot be switched from software. They will keep "
                 + "showing whatever they are on now."
           color: Color.urgent
-          font.family: Style.font.family
+          font.family: root.ff
+          font.pixelSize: Style.font.bodySmall
         }
+
+        PanelSeparator { Layout.fillWidth: true; foreground: root.fg }
+        PanelSectionHeader { text: "COMPUTERS"; foreground: root.fg; fontFamily: root.ff }
 
         // Column widths, shared by the header row and every monitor row so
         // the grid lines up without a GridLayout's index arithmetic.
         readonly property int gutterWidth: Style.space(220)
         readonly property int computerWidth: Style.space(250)
         readonly property int columnGap: Style.space(16)
-
-        Text {
-          Layout.fillWidth: true
-          wrapMode: Text.WordWrap
-          text: "For each screen, pick the input it shows when that computer has it. "
-                + "Try it switches the screen right now so you can check."
-          color: Qt.darker(Color.foreground, 1.4)
-          font.family: Style.font.family
-          font.pixelSize: Style.font.caption
-        }
-
-        PanelSeparator { Layout.fillWidth: true }
 
         // Computer columns: a name and an optional hostname, labelled, so an
         // editable field no longer masquerades as a column header.
@@ -313,8 +329,10 @@ Item {
 
               Text {
                 text: "Name"
-                color: Qt.darker(Color.foreground, 1.4)
-                font.family: Style.font.family
+                Layout.preferredWidth: Style.space(34)
+                horizontalAlignment: Text.AlignRight
+                color: root.dim
+                font.family: root.ff
                 font.pixelSize: Style.font.caption
               }
               // Seeded once rather than bound: a `text:` binding on a model the
@@ -328,9 +346,11 @@ Item {
                   Component.onCompleted: text = root.computers[index].label
                   onTextEdited: root.setLabel(index, text)
                 }
-                Button {
-                  Layout.preferredWidth: Style.space(32)
-                  text: "\u{f00d}"
+                PanelActionButton {
+                  iconText: "\u{f0156}"
+                  tooltipText: "Remove this computer"
+                  foreground: root.fg
+                  fontFamily: root.ff
                   enabled: root.computers.length > 1
                   onClicked: root.removeComputer(index)
                 }
@@ -338,8 +358,10 @@ Item {
 
               Text {
                 text: "Host"
-                color: Qt.darker(Color.foreground, 1.4)
-                font.family: Style.font.family
+                Layout.preferredWidth: Style.space(34)
+                horizontalAlignment: Text.AlignRight
+                color: root.dim
+                font.family: root.ff
                 font.pixelSize: Style.font.caption
               }
               TextField {
@@ -352,7 +374,19 @@ Item {
           }
         }
 
-        PanelSeparator { Layout.fillWidth: true }
+        PanelSeparator { Layout.fillWidth: true; foreground: root.fg }
+
+        RowLayout {
+          Layout.fillWidth: true
+          PanelSectionHeader { text: "SCREENS"; foreground: root.fg; fontFamily: root.ff }
+          Item { Layout.fillWidth: true }
+          Text {
+            text: "\u{f040a}  switches the screen now, so you can check the cable"
+            color: root.dim
+            font.family: root.ff
+            font.pixelSize: Style.font.caption
+          }
+        }
 
         // One row per screen, separated by a hairline so two screens read as
         // two things. The Try button sits on the dropdown's line rather than
@@ -376,13 +410,14 @@ Item {
                 spacing: 0
                 Text {
                   text: monitorRow.monitor ? monitorRow.monitor.label : ""
-                  color: Color.foreground
-                  font.family: Style.font.family
+                  color: root.fg
+                  font.family: root.ff
+                  font.pixelSize: Style.font.subtitle
                 }
                 Text {
                   text: monitorRow.monitor ? monitorRow.monitor.model : ""
-                  color: Qt.darker(Color.foreground, 1.55)
-                  font.family: Style.font.family
+                  color: root.dim
+                  font.family: root.ff
                   font.pixelSize: Style.font.caption
                 }
               }
@@ -416,9 +451,11 @@ Item {
                       onChanged: function(v) { if (cell.monitor) root.setCell(cell.col - 1, cell.monitor.serial, v) }
                     }
 
-                    Button {
-                      Layout.preferredWidth: Style.space(44)
-                      text: cell.trying ? "\u{f0e2}" : "\u{f04b}"
+                    PanelActionButton {
+                      iconText: cell.trying ? "\u{f054c}" : "\u{f040a}"
+                      tooltipText: cell.trying ? "Bring it back" : "Try it now"
+                      foreground: cell.trying ? Color.accent : root.fg
+                      fontFamily: root.ff
                       enabled: cell.monitor && root.cellValue(cell.col - 1, cell.monitor.serial) !== ""
                       onClicked: tryController.toggle(cell.monitor.serial, cell.col,
                                                       root.cellValue(cell.col - 1, cell.monitor.serial))
@@ -434,25 +471,32 @@ Item {
                     anchors.right: parent.right
                     visible: !cell.switchable
                     wrapMode: Text.WordWrap
-                    text: "No input switching. Check DDC/CI is enabled in this monitor's own menu."
-                    color: Qt.darker(Color.foreground, 1.55)
-                    font.family: Style.font.family
+                    text: "No input switching. Check DDC/CI is enabled in this screen's own menu."
+                    color: root.dim
+                    font.family: root.ff
                     font.pixelSize: Style.font.caption
                   }
                 }
               }
             }
 
-            PanelSeparator { Layout.fillWidth: true }
+            PanelSeparator { Layout.fillWidth: true; foreground: root.fg }
           }
         }
 
         RowLayout {
           Layout.fillWidth: true
-          Button { text: "+ Computer"; onClicked: root.addComputer() }
+          spacing: Style.space(8)
+          Button {
+            iconText: "\u{f0415}"
+            text: "Add computer"
+            foreground: root.fg
+            fontFamily: root.ff
+            onClicked: root.addComputer()
+          }
           Item { Layout.fillWidth: true }
-          Button { text: "Cancel"; onClicked: root.close() }
-          Button { text: "Save"; onClicked: root.save() }
+          Button { text: "Cancel"; foreground: root.fg; fontFamily: root.ff; onClicked: root.close() }
+          Button { text: "Save"; bordered: true; foreground: root.fg; fontFamily: root.ff; onClicked: root.save() }
         }
       }
     }
