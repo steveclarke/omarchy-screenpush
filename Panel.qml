@@ -192,7 +192,10 @@ Panel {
     // active-state colouring and the theme transition, and sized off
     // Style.font.icon rather than the bar's Style.bar.iconFont. Every
     // first-party bar widget just sets text.
-    text: "󰍺"
+    // Not the monitor glyph: omarchy.monitor uses U+F037A for a multi-screen
+    // desk, so the two icons were identical side by side. Swap arrows say
+    // what this does - move the screens - and nothing else on the bar uses it.
+    text: "󰓡"
     onPressed: root.toggle()
   }
 
