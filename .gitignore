@@ -1,2 +1,4 @@
 test/tmp/
 *.pdf
+__pycache__/
+*.pyc

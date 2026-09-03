@@ -373,3 +373,12 @@ JSON
   [[ "$output" == *"usage:"* ]]
   [[ "$output" != *"unbound variable"* ]]
 }
+
+@test "state reads an uppercase getvcp value as the same lowercase code" {
+  # Some ddcutil builds print sl=0x0F. Downstream compares lowercase
+  # 0x-prefixed codes, so an uppercase read must not become a different code.
+  echo "0x0F" > "$STUB_STATE/AAA0001"
+  run "$ENGINE" state
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.live["AAA0001"] == "0x0f"'
+}

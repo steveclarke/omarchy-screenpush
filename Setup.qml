@@ -234,7 +234,7 @@ Item {
     // but to redo it. Close on success only; on failure, surface the
     // engine's own message and leave the grid exactly as it was.
     onExited: function(exitCode) {
-      if (exitCode === 0) { root.closed(); return }
+      if (exitCode === 0) { root.close(); return }
       notifyProc.command = ["notify-send", "Screen Push", String(saveStderr.text || "").trim()]
       notifyProc.running = true
     }

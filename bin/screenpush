@@ -200,7 +200,7 @@ live_inputs() {
 
 read_input() {
   ddcutil --sn "$1" getvcp 60 2>/dev/null \
-    | grep -o 'sl=0x[0-9a-f]*' | cut -d= -f2 || true
+    | grep -o 'sl=0x[0-9a-fA-F]*' | cut -d= -f2 | tr 'A-F' 'a-f' || true
 }
 
 # Which configured computer matches what every monitor is showing. Null when
