@@ -224,6 +224,33 @@ Panel {
 
         PanelSectionHeader { text: "Send my screens to" }
 
+        // A screen the desk has never seen. The desk still resolves (on
+        // purpose - see the engine's `unmapped`), but a switch leaves this
+        // screen where it is. Say so here, before the click, not after.
+        RowLayout {
+          Layout.fillWidth: true
+          visible: root.submenuSerial === "" && root.deskState.known && root.deskState.unmapped.length > 0
+          spacing: Style.space(8)
+          Text {
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            text: root.deskState.unmapped.length === 1
+                  ? "1 screen here isn't set up. It will stay where it is."
+                  : root.deskState.unmapped.length + " screens here aren't set up. They will stay where they are."
+            color: Color.urgent
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+          }
+          Button {
+            text: "Set up"
+            onClicked: {
+              root.close()
+              if (setupLoader.active && setupLoader.item) setupLoader.item.open()
+              else setupLoader.active = true
+            }
+          }
+        }
+
         Repeater {
           model: root.submenuSerial === "" ? root.deskState.computers : []
           delegate: Button {

@@ -382,3 +382,24 @@ JSON
   [ "$status" -eq 0 ]
   echo "$output" | jq -e '.live["AAA0001"] == "0x0f"'
 }
+
+@test "state lists a present screen the stored desk has never seen as unmapped" {
+  # Stored desk is AAA0001+BBB0002; BBB0002 is gone and CCC0003 is present.
+  # The desk still resolves on overlap, and the new screen is reported so the
+  # menu can warn that a switch will leave it where it is.
+  save_office_desk
+  rm "$STUB_STATE/BBB0002"
+  echo "0x0f" > "$STUB_STATE/CCC0003"
+  echo "CCC0003 0x0f 0x11" >> "$STUB_CAPS"
+  run "$ENGINE" state
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.known == true'
+  echo "$output" | jq -e '.unmapped == ["CCC0003"]'
+}
+
+@test "state reports no unmapped screens for a fully set-up desk" {
+  save_office_desk
+  run "$ENGINE" state
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.unmapped == []'
+}

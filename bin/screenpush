@@ -235,6 +235,16 @@ cmd_state() {
         monitors: ($desk.monitors // []),
         computers: $computers,
         live: $live,
+        # Screens answering DDC that the stored desk has never seen. A desk
+        # resolves on partial overlap on purpose (a third screen must not wipe
+        # the setup), so these are the screens a switch will leave behind.
+        # The menu warns and proceeds; refusing would strand the whole desk
+        # for one new cable.
+        unmapped: (
+          [ ($live | keys[]) as $s
+            | select(([ ($desk.monitors // [])[] | .serial ] | index($s)) == null)
+            | $s ] | sort
+        ),
         current: (
           if ($live | length) == 0 then null
           else
