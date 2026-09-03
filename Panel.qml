@@ -76,6 +76,13 @@ Panel {
     switchProc.running = true
   }
 
+  function monitorLabel(serial) {
+    for (var i = 0; i < deskState.monitors.length; i++) {
+      if (deskState.monitors[i].serial === serial) return deskState.monitors[i].label.toLowerCase()
+    }
+    return "this screen"
+  }
+
   // "" is the computer list; a serial is that monitor's computer list.
   property string submenuSerial: ""
 
@@ -291,7 +298,11 @@ Panel {
         anchors.fill: parent
         spacing: Style.space(4)
 
-        PanelSectionHeader { text: "Send my screens to" }
+        PanelSectionHeader {
+          text: root.submenuSerial === "" ? "Send my screens to"
+              : root.submenuSerial === "monitors" ? "Which screen?"
+              : "Send " + root.monitorLabel(root.submenuSerial) + " to"
+        }
 
         // A screen the desk has never seen. The desk still resolves (on
         // purpose - see the engine's `unmapped`), but a switch leaves this
@@ -364,7 +375,7 @@ Panel {
         MenuRow {
           Layout.fillWidth: true
           visible: root.submenuSerial === "" && root.deskState.monitors.length > 1
-          label: "Just one screen"
+          label: "Send one screen only"
           trailing: "\u{f0142}"
           onActivated: root.submenuSerial = "monitors"
         }

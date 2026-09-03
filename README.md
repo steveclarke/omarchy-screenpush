@@ -43,7 +43,7 @@ switched off at the wall does not lose the desk.
 ## Use
 
 Click the icon and pick a computer. Every screen on the desk goes there. To
-send just one screen, use **Just one screen**.
+send a single screen, use **Send one screen only**.
 
 If the computer you are sending to has a hostname recorded, it is pinged
 first, and you are asked before the screens go to a machine that is not
