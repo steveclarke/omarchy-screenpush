@@ -181,6 +181,75 @@ Panel {
     function send(id: string): string { root.sendTo(id); return "ok" }
   }
 
+  // One menu line, built the way the bluetooth and network panels build a
+  // device row: left-aligned label, optional icon, optional trailing text or
+  // chevron on the right, hover fill, and a stronger fill for the current one.
+  component MenuRow: CursorSurface {
+    id: row
+    property string label: ""
+    property string icon: ""
+    property string trailing: ""
+    property bool dim: false
+    signal activated()
+
+    foreground: root.barForeground
+    implicitHeight: rowContent.implicitHeight + Style.spacing.rowPaddingX
+    opacity: enabled ? 1 : 0.5
+
+    MouseArea {
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: if (row.enabled) row.activated()
+    }
+
+    Item {
+      id: rowContent
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.leftMargin: Style.space(10)
+      anchors.rightMargin: Style.space(10)
+      implicitHeight: Math.max(rowIcon.implicitHeight, rowLabel.implicitHeight)
+
+      Text {
+        id: rowIcon
+        visible: row.icon !== ""
+        text: row.icon
+        color: row.dim ? Qt.darker(row.foreground, 1.4) : row.foreground
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.title
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
+      }
+
+      Text {
+        id: rowLabel
+        text: row.label
+        color: row.dim ? Qt.darker(row.foreground, 1.4) : row.foreground
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.body
+        elide: Text.ElideRight
+        anchors.left: rowIcon.visible ? rowIcon.right : parent.left
+        anchors.leftMargin: rowIcon.visible ? Style.space(10) : 0
+        anchors.right: rowTrailing.visible ? rowTrailing.left : parent.right
+        anchors.rightMargin: rowTrailing.visible ? Style.space(8) : 0
+        anchors.verticalCenter: parent.verticalCenter
+      }
+
+      Text {
+        id: rowTrailing
+        visible: row.trailing !== ""
+        text: row.trailing
+        color: Qt.darker(row.foreground, 1.4)
+        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.caption
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+      }
+    }
+  }
+
   BarIconButton {
     id: button
     anchors.fill: parent
@@ -253,58 +322,67 @@ Panel {
 
         Repeater {
           model: root.submenuSerial === "" ? root.deskState.computers : []
-          delegate: Button {
+          delegate: MenuRow {
             required property var modelData
             Layout.fillWidth: true
             enabled: !root.busy
-            text: (modelData.id === root.deskState.current ? "●  " : "○  ") + modelData.label
-            onClicked: root.sendTo(modelData.id)
+            label: modelData.label
+            current: modelData.id === root.deskState.current
+            trailing: current ? "here now" : ""
+            icon: "\u{f0379}"
+            onActivated: root.sendTo(modelData.id)
           }
         }
 
         // Monitor picker: which screen, then which computer for that screen.
         Repeater {
           model: root.submenuSerial === "monitors" ? root.deskState.monitors : []
-          delegate: Button {
+          delegate: MenuRow {
             required property var modelData
             Layout.fillWidth: true
-            text: modelData.label + "   ›"
-            onClicked: root.submenuSerial = modelData.serial
+            label: modelData.label
+            trailing: "\u{f0142}"
+            onActivated: root.submenuSerial = modelData.serial
           }
         }
 
         Repeater {
           model: (root.submenuSerial !== "" && root.submenuSerial !== "monitors")
                  ? root.deskState.computers : []
-          delegate: Button {
+          delegate: MenuRow {
             required property var modelData
             Layout.fillWidth: true
             enabled: !root.busy
-            text: modelData.label
-            onClicked: root.sendMonitorTo(root.submenuSerial, modelData.id)
+            label: modelData.label
+            icon: "\u{f0379}"
+            onActivated: root.sendMonitorTo(root.submenuSerial, modelData.id)
           }
         }
 
-        PanelSeparator { Layout.fillWidth: true }
+        PanelSeparator { Layout.fillWidth: true; foreground: root.barForeground }
 
-        Button {
+        MenuRow {
           Layout.fillWidth: true
           visible: root.submenuSerial === "" && root.deskState.monitors.length > 1
-          text: "Just one screen   ›"
-          onClicked: root.submenuSerial = "monitors"
+          label: "Just one screen"
+          trailing: "\u{f0142}"
+          onActivated: root.submenuSerial = "monitors"
         }
 
-        Button {
+        MenuRow {
           Layout.fillWidth: true
           visible: root.submenuSerial !== ""
-          text: "‹   Back"
-          onClicked: root.submenuSerial = (root.submenuSerial === "monitors" ? "" : "monitors")
+          icon: "\u{f0141}"
+          label: "Back"
+          onActivated: root.submenuSerial = (root.submenuSerial === "monitors" ? "" : "monitors")
         }
 
-        Button {
+        MenuRow {
           Layout.fillWidth: true
-          text: root.deskState.known ? "Set up this desk..." : "Set up this desk"
-          onClicked: {
+          icon: "\u{f0493}"
+          label: root.deskState.known ? "Set up this desk" : "Set up this desk"
+          dim: true
+          onActivated: {
             root.close()
             if (setupLoader.active && setupLoader.item) setupLoader.item.open()
             else setupLoader.active = true
