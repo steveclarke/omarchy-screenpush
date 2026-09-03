@@ -2,55 +2,88 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// Owns one in-flight "Try it": which panel was moved, what it was showing
-// before, and how to put it back.
+// Owns one in-flight "Try it": which screen was moved, what it showed before,
+// how to put it back, and what to tell the sheet about it.
 Item {
   id: root
 
   property string engine: ""
   property int monitorCount: 0
 
-  // Empty while nothing is being tried.
+  // Empty while nothing is being tried. Keyed by computer id, not column:
+  // removing a computer above the tried one must not move the indicator.
   property string serial: ""
-  property int column: -1
+  property string computerId: ""
   property string previousCode: ""
+  property string code: ""
+  property bool busy: false
+  property string error: ""
+
+  // Seconds left before a one-screen desk brings itself back.
+  property int remaining: 0
 
   readonly property bool trying: serial !== ""
 
-  function toggle(targetSerial, targetColumn, code) {
-    if (trying) { revert(); return }
-    if (!targetSerial || !code) return
+  function isTrying(targetSerial, targetComputerId) {
+    return trying && serial === targetSerial && computerId === targetComputerId
+  }
+
+  // Pressing Try on the cell being tried brings it back. Pressing Try on a
+  // different cell while one is out reverts that one first, then tries the
+  // new one, rather than silently doing only the revert.
+  function toggle(targetSerial, targetComputerId, targetCode) {
+    if (busy) return
+    error = ""
+    if (isTrying(targetSerial, targetComputerId)) { revert(); return }
+    if (!targetSerial || !targetCode) return
+    if (trying) {
+      queued = { serial: targetSerial, computerId: targetComputerId, code: targetCode }
+      revert()
+      return
+    }
+    start(targetSerial, targetComputerId, targetCode)
+  }
+
+  property var queued: null
+
+  function start(targetSerial, targetComputerId, targetCode) {
+    busy = true
     root.serial = targetSerial
-    root.column = targetColumn
+    root.computerId = targetComputerId
+    root.code = targetCode
     readProc.command = [root.engine, "state"]
-    readProc.pendingCode = code
     readProc.running = true
   }
 
   function revert() {
     if (!trying || previousCode === "") { clear(); return }
+    busy = true
     revertProc.command = [root.engine, "switch-raw", serial, previousCode]
     revertProc.running = true
   }
 
   function clear() {
     autoRevert.stop()
+    countdown.stop()
     serial = ""
-    column = -1
+    computerId = ""
     previousCode = ""
+    code = ""
+    remaining = 0
+    busy = false
+    if (queued) { var q = queued; queued = null; start(q.serial, q.computerId, q.code) }
   }
 
   Process {
     id: readProc
-    property string pendingCode: ""
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         var live = {}
         try { live = (JSON.parse(String(text || "")).live) || {} } catch (e) { live = {} }
         root.previousCode = live[root.serial] !== undefined ? live[root.serial] : ""
-        if (root.previousCode === "") { root.clear(); return }
-        applyProc.command = [root.engine, "switch-raw", root.serial, readProc.pendingCode]
+        if (root.previousCode === "") { root.error = "That screen isn't answering, so it wasn't tried."; root.clear(); return }
+        applyProc.command = [root.engine, "switch-raw", root.serial, root.code]
         applyProc.running = true
       }
     }
@@ -60,21 +93,12 @@ Item {
     id: applyProc
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { id: applyStderr; waitForEnd: true }
-    // A refused switch-raw - a stale code, a sleeping monitor, DDC/CI turned
-    // off in the monitor's own menu - exited silently, and the button then sat
-    // there offering to bring back a screen that never moved. Say so instead.
     onExited: function(exitCode) {
-      if (exitCode === 0) return
-      root.clear()
-      notifyProc.command = ["notify-send", "Screen Push", String(applyStderr.text || "").trim()]
-      notifyProc.running = true
-    }
-    onRunningChanged: {
-      if (running) return
-      // Only a single-monitor desk needs the timer. With a second screen the
-      // grid is still visible and the person can press Bring it back, which
-      // is a better experience than a countdown they have to beat.
-      if (root.monitorCount <= 1) autoRevert.restart()
+      root.busy = false
+      if (exitCode !== 0) { root.error = String(applyStderr.text || "").trim(); root.clear(); return }
+      // Only a one-screen desk needs the timer: with a second screen the
+      // sheet is still visible and Bring it back is right there.
+      if (root.monitorCount <= 1) { root.remaining = 15; autoRevert.restart(); countdown.restart() }
     }
   }
 
@@ -82,23 +106,17 @@ Item {
     id: revertProc
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { id: revertStderr; waitForEnd: true }
-    // Failing to revert is the worse half of the pair: the screen is sitting
-    // on the input we moved it to and the person is looking at another machine.
     onExited: function(exitCode) {
-      if (exitCode === 0) return
-      notifyProc.command = ["notify-send", "Screen Push",
-                            "Could not bring the screen back: " + String(revertStderr.text || "").trim()]
-      notifyProc.running = true
+      if (exitCode !== 0) root.error = "Couldn't bring the screen back. Use its own menu to switch it."
+      root.clear()
     }
-    onRunningChanged: if (!running) root.clear()
   }
 
-  Process { id: notifyProc }
-
+  Timer { id: autoRevert; interval: 15000; repeat: false; onTriggered: root.revert() }
   Timer {
-    id: autoRevert
-    interval: 15000
-    repeat: false
-    onTriggered: root.revert()
+    id: countdown
+    interval: 1000
+    repeat: true
+    onTriggered: root.remaining = Math.max(0, root.remaining - 1)
   }
 }

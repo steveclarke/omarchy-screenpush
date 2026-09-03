@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
@@ -39,24 +40,61 @@ Item {
   // on open rather than in the panel itself.
   property bool sheetOpen: false
 
+  // After Cancel or Save the next open starts from what is saved; after a
+  // click outside, the draft survives.
+  property bool reloadOnOpen: false
+  property bool detecting: false
+  property bool saving: false
+  property string sheetError: ""
+  property string noScreensHint: ""
+
   function open() {
-    // Already loaded: show what is there rather than re-detecting, which
-    // would also overwrite whatever was typed.
-    if (monitors.length > 0) { sheetOpen = true; return }
+    sheetError = ""
+    if (monitors.length > 0 && !reloadOnOpen) { sheetOpen = true; return }
+    detect()
+  }
+
+  function detect() {
+    reloadOnOpen = false
+    detecting = true
+    noScreensHint = ""
+    sheetOpen = true
     detectProc.running = true
   }
+
+  function cancel() { reloadOnOpen = true; close() }
 
   // KeyboardPanel.close() calls owner.close() if the owner has one, and
   // Bar.requestPopout() closes a displaced popup through closeForPopoutSwitch
   // or close. Without this function neither finds anything: the sheet vanishes
   // without emitting closed(), Panel.qml's Loader stays active, onLoaded never
   // re-fires, and "Set up this desk" is dead for the rest of the session.
-  function close() { sheetOpen = false; root.closed() }
+  function close() {
+    // A screen left on a tried input with the sheet gone would be a screen
+    // showing another computer with no Bring it back in sight.
+    if (tryController.trying) tryController.revert()
+    sheetOpen = false
+    root.closed()
+  }
+
+  // Every computer needs a name; the menu row is the name.
+  readonly property string validationError: {
+    for (var i = 0; i < computers.length; i++) {
+      if (String(computers[i].label || "").trim() === "") return "Give every computer a name."
+    }
+    return ""
+  }
+  readonly property bool canSave: !saving && !detecting && monitors.length > 0 && validationError === ""
 
   // Human names for the codes the hardware reports, so a cell reads
   // "HDMI 1" rather than "0x11". Anything unrecognised falls through as
   // the raw code rather than being hidden, because a monitor with an
   // unusual input still needs to be selectable.
+  function monitorLabelFor(serial) {
+    for (var i = 0; i < monitors.length; i++) if (monitors[i].serial === serial) return monitors[i].label
+    return "Screen"
+  }
+
   readonly property var inputNames: ({
     "0x01": "VGA 1", "0x03": "DVI 1", "0x04": "DVI 2",
     "0x0f": "DisplayPort 1", "0x10": "DisplayPort 2",
@@ -95,7 +133,7 @@ Item {
   // to add one back with a sensible default, so the last column stays.
   function removeComputer(computerIndex) {
     if (computers.length <= 1) return
-    if (tryController.column === computerIndex + 1) tryController.revert()
+    if (tryController.computerId === computers[computerIndex].id) tryController.revert()
     var next = JSON.parse(JSON.stringify(computers))
     next.splice(computerIndex, 1)
     computers = next
@@ -142,13 +180,16 @@ Item {
   }
 
   function save() {
+    if (!canSave) return
+    saving = true
+    sheetError = ""
     // onStarted clears stdinEnabled after writing, and a failed save
     // deliberately leaves the sheet open to retry. Without re-arming here the
     // retry's write() goes nowhere, the engine reads EOF, and it reports
     // "stdin is not valid JSON" forever - a wrong reason the user cannot act on.
     saveProc.stdinEnabled = true
     var payload = {
-      label: deskLabel === "" ? "My desk" : deskLabel,
+      label: deskLabel === "" ? "This desk" : deskLabel,
       monitors: monitors.map(function(m) {
         return { serial: m.serial, label: m.label, model: m.model }
       }),
@@ -164,18 +205,21 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var found = []
-        try { found = JSON.parse(String(text || "")).monitors || [] } catch (e) { found = [] }
+        var found = [], parsedDetect = {}
+        try { parsedDetect = JSON.parse(String(text || "")); found = parsedDetect.monitors || [] } catch (e) { found = [] }
         // Left-to-right names are a guess the person can correct; ddcutil
-        // order is not physical order. A blank name would be worse: the
-        // grid would be rows of anonymous serials.
-        var positions = ["Left screen", "Middle screen", "Right screen",
-                         "Fourth screen", "Fifth screen"]
+        // order is not physical order. Two screens are Left and Right, not
+        // Left and Middle - that read as a lost third screen.
+        var positions = found.length === 2 ? ["Left screen", "Right screen"]
+                      : found.length === 3 ? ["Left screen", "Middle screen", "Right screen"]
+                      : []
         for (var i = 0; i < found.length; i++) {
           found[i].label = positions[i] !== undefined ? positions[i] : ("Screen " + (i + 1))
           found[i].model = found[i].model || ""
         }
         root.monitors = found
+        root.noScreensHint = found.length === 0 ? String(parsedDetect.hint || "No screens answered.") : ""
+        if (found.length === 0) { root.detecting = false; return }
         stateProc.running = true
       }
     }
@@ -201,6 +245,7 @@ Item {
               return m
             })
           }
+          root.detecting = false
           root.sheetOpen = true
           return
         }
@@ -208,11 +253,12 @@ Item {
         // First run on this desk. The machine in use can answer for itself:
         // whatever every monitor is showing right now IS this computer, so
         // that column is filled in rather than asked about (PRD R8).
-        var mine = { id: "this", label: "This machine", host: null, inputs: {} }
+        var mine = { id: "this", label: "This computer", host: null, inputs: {} }
         var live = parsed.live || {}
         for (var serial in live) mine.inputs[serial] = live[serial]
         root.computers = [mine]
         root.addComputer()
+        root.detecting = false
         // Only now. Showing the card before detect and state have answered
         // meant it mapped nearly empty and then jumped to full size as the
         // rows arrived - the shift you see on open.
@@ -234,9 +280,9 @@ Item {
     // but to redo it. Close on success only; on failure, surface the
     // engine's own message and leave the grid exactly as it was.
     onExited: function(exitCode) {
-      if (exitCode === 0) { root.close(); return }
-      notifyProc.command = ["notify-send", "Screen Push", String(saveStderr.text || "").trim()]
-      notifyProc.running = true
+      root.saving = false
+      if (exitCode === 0) { root.reloadOnOpen = true; root.close(); return }
+      root.sheetError = String(saveStderr.text || "").trim()
     }
   }
 
@@ -248,256 +294,252 @@ Item {
     anchorItem: root.anchorItem
     bar: root.bar
     open: root.sheetOpen
-    // centerOnBar because this sheet is far wider than the bar icon it hangs
-    // off; anchored to the icon it would sit half off-screen near an edge.
     centerOnBar: true
-    // The surface gets keyboard focus, but Qt needs an active-focus item
-    // inside it before any key handler fires. Without this Esc does nothing
-    // and the first click is spent focusing a field.
     focusTarget: keyCatcher
-    // fitted* clamps to the screen and adds the border+padding inset. The
-    // hand-rolled arithmetic this replaces ran the card off the right edge
-    // once enough computers were added, taking the Save button with it.
-    contentWidth: sheet.fittedContentWidth(Style.space(260) + root.computers.length * Style.space(266))
-    contentHeight: sheet.fittedContentHeight(column.implicitHeight, Style.space(520))
+    contentWidth: sheet.fittedContentWidth(Style.space(460))
+    contentHeight: sheet.fittedContentHeight(column.implicitHeight, Style.space(760))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
       onCloseRequested: root.close()
 
-      ColumnLayout {
-        id: column
+      // Taller desks scroll inside the card rather than running off it.
+      Flickable {
+        id: flick
         anchors.fill: parent
-        spacing: Style.space(12)
+        contentWidth: width
+        contentHeight: column.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+        interactive: contentHeight > height
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-        // Same hero every first-party panel opens with: icon, title, and a
-        // small-caps status line. Here the status is what this sheet is for.
+      Column {
+        id: column
+        width: flick.width
+        spacing: Style.space(14)
+
         PanelHero {
-          Layout.fillWidth: true
           foreground: root.fg
           fontFamily: root.ff
           title: "Screen Push"
-          meta: (root.deskLabel !== "" ? root.deskLabel : "This desk").toUpperCase()
-          detail: root.monitors.length + (root.monitors.length === 1 ? " screen" : " screens")
-                  + " · " + root.computers.length + (root.computers.length === 1 ? " computer" : " computers")
+          meta: root.detecting ? "LOOKING FOR SCREENS…"
+              : tryController.trying
+                ? (root.monitorLabelFor(tryController.serial) + " IS ON " + root.inputLabel(tryController.code)
+                   + (tryController.remaining > 0 ? " · BACK IN " + tryController.remaining + " S" : " · PRESS AGAIN TO BRING IT BACK")).toUpperCase()
+              : ("THIS DESK · " + root.monitors.length + (root.monitors.length === 1 ? " SCREEN · " : " SCREENS · ")
+                 + root.computers.length + (root.computers.length === 1 ? " COMPUTER" : " COMPUTERS"))
           iconComponent: Component {
-            Text {
-              text: "\u{f04e1}"
-              color: root.fg
-              font.family: root.ff
-              font.pixelSize: Style.font.display
+            Text { text: "\u{f04e1}"; color: root.fg; font.family: root.ff; font.pixelSize: Style.font.display }
+          }
+          trailingControl: Component {
+            PanelActionButton {
+              iconText: "\u{f0450}"
+              tooltipText: "Look for screens again"
+              foreground: root.fg
+              fontFamily: root.ff
+              enabled: !root.detecting
+              onClicked: root.detect()
             }
           }
         }
 
+        // Nothing answered: say why, and stop there.
         Text {
-          Layout.fillWidth: true
-          visible: root.monitors.filter(function(m) { return m.inputs.length === 0 }).length > 0
+          visible: !root.detecting && root.monitors.length === 0
+          width: parent.width
           wrapMode: Text.WordWrap
-          text: "Some screens here cannot be switched from software. They will keep "
-                + "showing whatever they are on now."
+          text: root.noScreensHint
           color: Color.urgent
           font.family: root.ff
           font.pixelSize: Style.font.bodySmall
         }
 
-        PanelSeparator { Layout.fillWidth: true; foreground: root.fg }
-        PanelSectionHeader { text: "COMPUTERS"; foreground: root.fg; fontFamily: root.ff }
+        PanelSeparator { visible: root.monitors.length > 0; foreground: root.fg }
 
-        // Column widths, shared by the header row and every monitor row so
-        // the grid lines up without a GridLayout's index arithmetic.
-        readonly property int gutterWidth: Style.space(220)
-        readonly property int computerWidth: Style.space(250)
-        readonly property int columnGap: Style.space(16)
+        // ---------- Computers ----------
+        Column {
+          visible: root.monitors.length > 0
+          width: parent.width
+          spacing: Style.space(10)
 
-        // Computer columns: a name and an optional hostname, labelled, so an
-        // editable field no longer masquerades as a column header.
-        RowLayout {
-          spacing: column.columnGap
-          Item { Layout.preferredWidth: column.gutterWidth; Layout.minimumWidth: column.gutterWidth }
+          PanelSectionHeader { text: "COMPUTERS"; foreground: root.fg; fontFamily: root.ff }
 
           Repeater {
             model: root.computers.length
-            delegate: GridLayout {
+            delegate: Column {
               required property int index
-              Layout.preferredWidth: column.computerWidth
-              Layout.minimumWidth: column.computerWidth
-              columns: 2
-              columnSpacing: Style.space(8)
-              rowSpacing: Style.space(4)
+              width: parent.width
+              spacing: Style.spacing.labelGap
 
-              Text {
-                text: "Name"
-                Layout.preferredWidth: Style.space(34)
-                horizontalAlignment: Text.AlignRight
-                color: root.dim
-                font.family: root.ff
-                font.pixelSize: Style.font.caption
-              }
-              // Seeded once rather than bound: a `text:` binding on a model the
-              // handler writes back to is a loop. onTextEdited fires only for
-              // real typing, so a programmatic reseed cannot re-enter it.
-              RowLayout {
-                Layout.fillWidth: true
+              Row {
+                width: parent.width
                 spacing: Style.space(6)
                 TextField {
-                  Layout.fillWidth: true
+                  width: parent.width - removeBtn.width - Style.space(6)
+                  verticalPadding: Style.spacing.controlPaddingY
+                  placeholderText: "Name"
                   Component.onCompleted: text = root.computers[index].label
                   onTextEdited: root.setLabel(index, text)
                 }
                 PanelActionButton {
+                  id: removeBtn
                   iconText: "\u{f0156}"
-                  tooltipText: "Remove this computer"
+                  tooltipText: "Remove"
                   foreground: root.fg
                   fontFamily: root.ff
                   enabled: root.computers.length > 1
+                  anchors.verticalCenter: parent.verticalCenter
                   onClicked: root.removeComputer(index)
                 }
               }
-
-              Text {
-                text: "Host"
-                Layout.preferredWidth: Style.space(34)
-                horizontalAlignment: Text.AlignRight
-                color: root.dim
-                font.family: root.ff
-                font.pixelSize: Style.font.caption
-              }
               TextField {
-                Layout.fillWidth: true
-                placeholderText: "optional"
+                width: parent.width
+                verticalPadding: Style.spacing.controlPaddingY
+                placeholderText: "Hostname or IP, optional - pinged before sending"
                 Component.onCompleted: text = root.computers[index].host || ""
                 onTextEdited: root.setHost(index, text)
               }
             }
           }
-        }
 
-        PanelSeparator { Layout.fillWidth: true; foreground: root.fg }
-
-        RowLayout {
-          Layout.fillWidth: true
-          PanelSectionHeader { text: "SCREENS"; foreground: root.fg; fontFamily: root.ff }
-          Item { Layout.fillWidth: true }
-          Text {
-            text: "\u{f040a}  switches the screen now, so you can check the cable"
-            color: root.dim
-            font.family: root.ff
-            font.pixelSize: Style.font.caption
+          Button {
+            iconText: "\u{f0415}"
+            text: "Add computer"
+            bordered: true
+            fontSize: Style.font.caption
+            foreground: root.fg
+            fontFamily: root.ff
+            onClicked: root.addComputer()
           }
         }
 
-        // One row per screen, separated by a hairline so two screens read as
-        // two things. The Try button sits on the dropdown's line rather than
-        // under it, so each cell is one line high.
-        Repeater {
-          model: root.monitors.length
-          delegate: ColumnLayout {
-            id: monitorRow
-            required property int index
-            readonly property var monitor: root.monitors[index]
-            Layout.fillWidth: true
-            spacing: Style.space(8)
+        PanelSeparator { visible: root.monitors.length > 0; foreground: root.fg }
 
-            RowLayout {
-              spacing: column.columnGap
+        // ---------- Screens ----------
+        Column {
+          visible: root.monitors.length > 0
+          width: parent.width
+          spacing: Style.space(10)
 
-              ColumnLayout {
-                Layout.preferredWidth: column.gutterWidth
-                Layout.minimumWidth: column.gutterWidth
-                Layout.alignment: Qt.AlignVCenter
+          PanelSectionHeader { text: "SCREENS"; foreground: root.fg; fontFamily: root.ff }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "For each screen, pick the input each computer is plugged into. Try it switches the screen right now, and brings it back when pressed again."
+            color: Qt.darker(root.fg, 1.5)
+            font.family: root.ff
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Repeater {
+            model: root.monitors.length
+            delegate: Column {
+              id: screenBlock
+              required property int index
+              readonly property var monitor: root.monitors[index]
+              readonly property bool switchable: monitor && monitor.inputs.length > 0
+              width: parent.width
+              spacing: Style.space(8)
+
+              Column {
                 spacing: 0
                 Text {
-                  text: monitorRow.monitor ? monitorRow.monitor.label : ""
+                  text: screenBlock.monitor ? screenBlock.monitor.label : ""
                   color: root.fg
                   font.family: root.ff
                   font.pixelSize: Style.font.subtitle
                 }
                 Text {
-                  text: monitorRow.monitor ? monitorRow.monitor.model : ""
-                  color: root.dim
+                  text: screenBlock.monitor ? screenBlock.monitor.model : ""
+                  color: Qt.darker(root.fg, 1.4)
                   font.family: root.ff
                   font.pixelSize: Style.font.caption
                 }
               }
 
+              Text {
+                visible: !screenBlock.switchable
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Can't switch this screen. Turn on DDC/CI in its own menu, then look for screens again."
+                color: Qt.darker(root.fg, 1.4)
+                font.family: root.ff
+                font.pixelSize: Style.font.bodySmall
+              }
+
               Repeater {
-                model: root.computers.length
-                delegate: Item {
+                model: screenBlock.switchable ? root.computers.length : 0
+                delegate: Row {
                   id: cell
                   required property int index
-                  readonly property int col: index + 1
-                  readonly property var monitor: monitorRow.monitor
-                  readonly property bool switchable: monitor && monitor.inputs.length > 0
-                  readonly property bool trying: tryController.serial === (monitor ? monitor.serial : "")
-                                                 && tryController.column === col
-                  Layout.preferredWidth: column.computerWidth
-                  Layout.minimumWidth: column.computerWidth
-                  implicitHeight: switchable ? cellRow.implicitHeight : noSwitch.implicitHeight
+                  readonly property var computer: root.computers[index]
+                  readonly property string serial: screenBlock.monitor ? screenBlock.monitor.serial : ""
+                  readonly property string value: root.cellValue(index, serial)
+                  readonly property bool trying: tryController.isTrying(serial, computer ? computer.id : "")
+                  width: parent.width
+                  spacing: Style.space(8)
 
-                  RowLayout {
-                    id: cellRow
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    visible: cell.switchable
-                    spacing: Style.space(6)
-
-                    Dropdown {
-                      Layout.fillWidth: true
-                      showLabel: false
-                      options: cell.monitor ? root.optionsFor(cell.monitor.serial) : []
-                      value: cell.monitor ? root.cellValue(cell.col - 1, cell.monitor.serial) : ""
-                      onChanged: function(v) { if (cell.monitor) root.setCell(cell.col - 1, cell.monitor.serial, v) }
-                    }
-
-                    PanelActionButton {
-                      iconText: cell.trying ? "\u{f054c}" : "\u{f040a}"
-                      tooltipText: cell.trying ? "Bring it back" : "Try it now"
-                      foreground: cell.trying ? Color.accent : root.fg
-                      fontFamily: root.ff
-                      enabled: cell.monitor && root.cellValue(cell.col - 1, cell.monitor.serial) !== ""
-                      onClicked: tryController.toggle(cell.monitor.serial, cell.col,
-                                                      root.cellValue(cell.col - 1, cell.monitor.serial))
-                    }
+                  Dropdown {
+                    width: parent.width - tryBtn.width - Style.space(8)
+                    label: cell.computer ? cell.computer.label : ""
+                    foreground: root.fg
+                    fontFamily: root.ff
+                    options: root.optionsFor(cell.serial)
+                    value: cell.value
+                    onChanged: function(v) { root.setCell(cell.index, cell.serial, v) }
                   }
-
-                  // A monitor that answers DDC but lists no input codes cannot be
-                  // switched from software. Saying so is the whole of R16: the
-                  // alternative is an empty dropdown that looks like a bug here.
-                  Text {
-                    id: noSwitch
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    visible: !cell.switchable
-                    wrapMode: Text.WordWrap
-                    text: "No input switching. Check DDC/CI is enabled in this screen's own menu."
-                    color: root.dim
-                    font.family: root.ff
-                    font.pixelSize: Style.font.caption
+                  PanelActionButton {
+                    id: tryBtn
+                    iconText: cell.trying ? "\u{f054c}" : "\u{f040a}"
+                    tooltipText: cell.trying ? "Bring it back" : "Try it"
+                    foreground: cell.trying ? Color.accent : root.fg
+                    fontFamily: root.ff
+                    enabled: cell.value !== "" && !tryController.busy
+                    anchors.bottom: parent.bottom
+                    onClicked: tryController.toggle(cell.serial, cell.computer.id, cell.value)
                   }
                 }
               }
-            }
 
-            PanelSeparator { Layout.fillWidth: true; foreground: root.fg }
+              PanelSeparator { visible: screenBlock.index < root.monitors.length - 1; foreground: root.fg }
+            }
           }
         }
 
-        RowLayout {
-          Layout.fillWidth: true
+        // Problems, in one place, above the buttons that caused them.
+        Text {
+          visible: text !== ""
+          width: parent.width
+          wrapMode: Text.WordWrap
+          text: root.sheetError !== "" ? root.sheetError
+              : tryController.error !== "" ? tryController.error
+              : root.validationError
+          color: Color.urgent
+          font.family: root.ff
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        Row {
+          visible: root.monitors.length > 0
+          anchors.right: parent.right
           spacing: Style.space(8)
+          Button { text: "Cancel"; bordered: true; fontSize: Style.font.caption; foreground: root.fg; fontFamily: root.ff; onClicked: root.cancel() }
           Button {
-            iconText: "\u{f0415}"
-            text: "Add computer"
+            text: root.saving ? "Saving…" : "Save"
+            bordered: true
+            active: true
+            fontSize: Style.font.caption
             foreground: root.fg
             fontFamily: root.ff
-            onClicked: root.addComputer()
+            opacity: root.canSave ? 1 : 0.45
+            onClicked: root.save()
           }
-          Item { Layout.fillWidth: true }
-          Button { text: "Cancel"; foreground: root.fg; fontFamily: root.ff; onClicked: root.close() }
-          Button { text: "Save"; bordered: true; foreground: root.fg; fontFamily: root.ff; onClicked: root.save() }
         }
+      }
       }
     }
   }

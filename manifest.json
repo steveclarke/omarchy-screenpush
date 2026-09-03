@@ -5,12 +5,12 @@
   "version": "0.1.0",
   "author": "Steve Clarke",
   "license": "MIT",
-  "description": "Push every screen on your desk to another computer in one click, over DDC/CI.",
+  "description": "Send every screen on your desk to another computer in one click.",
   "kinds": ["bar-widget"],
   "entryPoints": { "barWidget": "Panel.qml" },
   "barWidget": {
     "displayName": "Screen Push",
-    "description": "Send all your screens to a named computer.",
+    "description": "Send all your screens to another computer.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right"
