@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ################################################################################
-# monitor-input - send every monitor on this desk to a named computer
+# screenpush - send every monitor on this desk to a named computer
 ################################################################################
 #
 # OVERVIEW
@@ -15,21 +15,21 @@ set -euo pipefail
 #
 # USAGE
 # -----
-#   monitor-input detect              JSON: monitors present and their inputs
-#   monitor-input state               JSON: this desk, its computers, live input
-#   monitor-input switch <id>         send every monitor to that computer
-#   monitor-input switch <id> --monitor <serial>    just one monitor
-#   monitor-input switch-raw <serial> <code>  send one monitor to a literal code
-#   monitor-input reachable <id>      exit 0 if that computer answers a ping
+#   screenpush detect              JSON: monitors present and their inputs
+#   screenpush state               JSON: this desk, its computers, live input
+#   screenpush switch <id>         send every monitor to that computer
+#   screenpush switch <id> --monitor <serial>    just one monitor
+#   screenpush switch-raw <serial> <code>  send one monitor to a literal code
+#   screenpush reachable <id>      exit 0 if that computer answers a ping
 #
 # CONFIGURATION
 # -------------
-# ~/.config/monitor-input/desks.json, written by the Omarchy plugin's setup
+# ~/.config/screenpush/desks.json, written by the Omarchy plugin's setup
 # screen. Nothing here needs hand-editing.
 #
 ################################################################################
 
-DESKS=${MONITOR_INPUT_DESKS:-${XDG_CONFIG_HOME:-$HOME/.config}/monitor-input/desks.json}
+DESKS=${SCREENPUSH_DESKS:-${XDG_CONFIG_HOME:-$HOME/.config}/screenpush/desks.json}
 
 # shellcheck source=../lib/desk.sh
 source "$(dirname "$(readlink -f "$0")")/../lib/desk.sh"
@@ -51,7 +51,7 @@ main() {
     switch-raw) with_switch_lock cmd_switch_raw "$@" ;;
     reachable) cmd_reachable "$@" ;;
     save-desk) cmd_save_desk ;;
-    *)      error "usage: monitor-input detect|state|switch|switch-raw|reachable|save-desk" ;;
+    *)      error "usage: screenpush detect|state|switch|switch-raw|reachable|save-desk" ;;
   esac
 }
 
@@ -318,12 +318,12 @@ cmd_switch() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --monitor)
-        [ $# -ge 2 ] || error "usage: monitor-input switch <computer> [--monitor <serial>]"
+        [ $# -ge 2 ] || error "usage: screenpush switch <computer> [--monitor <serial>]"
         only="$2"; shift 2 ;;
       *) error "unknown option: $1" ;;
     esac
   done
-  [ -n "$target" ] || error "usage: monitor-input switch <computer> [--monitor <serial>]"
+  [ -n "$target" ] || error "usage: screenpush switch <computer> [--monitor <serial>]"
 
   prime_detect
   verify_unique_serials
@@ -381,8 +381,8 @@ cmd_switch() {
 # or not it came from a saved desk.
 cmd_switch_raw() {
   local serial="${1:-}" code="${2:-}"
-  [ -n "$serial" ] || error "usage: monitor-input switch-raw <serial> <code>"
-  [ -n "$code" ] || error "usage: monitor-input switch-raw <serial> <code>"
+  [ -n "$serial" ] || error "usage: screenpush switch-raw <serial> <code>"
+  [ -n "$code" ] || error "usage: screenpush switch-raw <serial> <code>"
 
   verify_all_present "$serial"
   verify_codes "$serial" "$code"
@@ -397,7 +397,7 @@ cmd_switch_raw() {
 # handing it the screens is a real thing to want.
 cmd_reachable() {
   local target="${1:-}"
-  [ -n "$target" ] || error "usage: monitor-input reachable <computer>"
+  [ -n "$target" ] || error "usage: screenpush reachable <computer>"
 
   local desk host
   desk=$(desk_json "$(desk_key)")

@@ -4,7 +4,7 @@
 // cloned it, so the path is resolved relative to this file rather than
 // assumed. Qt hands back a file:// URL; Process wants a filesystem path.
 function enginePath(resolveUrl) {
-  return String(resolveUrl("bin/monitor-input")).replace(/^file:\/\//, "")
+  return String(resolveUrl("bin/screenpush")).replace(/^file:\/\//, "")
 }
 
 function parseState(text) {

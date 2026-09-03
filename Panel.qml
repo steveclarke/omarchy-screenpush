@@ -7,8 +7,8 @@ import "Engine.js" as Engine
 
 Panel {
   id: root
-  moduleName: "io.github.steveclarke.monitor-input"
-  ipcTarget: "monitor-input"
+  moduleName: "io.github.steveclarke.screenpush"
+  ipcTarget: "screenpush"
   manageIpc: false
 
   // A bar widget must publish its own size. Item defaults to 0x0, so
@@ -129,7 +129,7 @@ Panel {
       if (reason !== "") {
         root.busy = false
         root.pendingComputer = ""
-        notifyProc.command = ["notify-send", "Monitor Input", reason]
+        notifyProc.command = ["notify-send", "Screen Push", reason]
         notifyProc.running = true
         return
       }
@@ -151,7 +151,7 @@ Panel {
     onExited: function(exitCode) {
       root.busy = false
       if (exitCode === 0) { root.broadcast("refresh"); root.close(); return }
-      notifyProc.command = ["notify-send", "Monitor Input", String(switchStderr.text || "").trim()]
+      notifyProc.command = ["notify-send", "Screen Push", String(switchStderr.text || "").trim()]
       notifyProc.running = true
     }
     // Failing closed is right here: nothing moved, so release the menu and
@@ -327,8 +327,8 @@ Panel {
     source: Qt.resolvedUrl("Setup.qml")
     onStatusChanged: {
       if (status === Loader.Error) {
-        notifyProc.command = ["notify-send", "Monitor Input",
-                              "The setup screen failed to load. See: journalctl --user -b | grep monitor-input"]
+        notifyProc.command = ["notify-send", "Screen Push",
+                              "The setup screen failed to load. See: journalctl --user -b | grep screenpush"]
         notifyProc.running = true
         active = false
       }

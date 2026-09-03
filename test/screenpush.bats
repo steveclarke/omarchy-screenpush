@@ -4,7 +4,7 @@ load fixtures/two-monitors.env
 
 setup() {
   setup_two_monitors
-  ENGINE="$BATS_TEST_DIRNAME/../bin/monitor-input"
+  ENGINE="$BATS_TEST_DIRNAME/../bin/screenpush"
 }
 
 @test "detect lists both monitors with their valid input codes" {
@@ -34,7 +34,7 @@ setup() {
 }
 
 @test "state reads computers back from a saved desk" {
-  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+  cat > "$XDG_CONFIG_HOME/screenpush/desks.json" <<'JSON'
 {"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office",
  "monitors":[{"serial":"AAA0001","label":"Left","model":"STUB MONITOR"},
              {"serial":"BBB0002","label":"Right","model":"STUB MONITOR"}],
@@ -51,7 +51,7 @@ JSON
 }
 
 @test "a desk is still recognised when one monitor is switched off" {
-  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+  cat > "$XDG_CONFIG_HOME/screenpush/desks.json" <<'JSON'
 {"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office","monitors":[],
  "computers":[{"id":"this","label":"This machine","host":null,
                "inputs":{"AAA0001":"0x0f","BBB0002":"0x0f"}}]}}}
@@ -69,7 +69,7 @@ JSON
 }
 
 @test "a desk is still recognised when a monitor is added" {
-  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+  cat > "$XDG_CONFIG_HOME/screenpush/desks.json" <<'JSON'
 {"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office","monitors":[],
  "computers":[{"id":"this","label":"This machine","host":null,
                "inputs":{"AAA0001":"0x0f","BBB0002":"0x0f"}},
@@ -89,7 +89,7 @@ JSON
 }
 
 @test "an unknown desk is still reported as unknown" {
-  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+  cat > "$XDG_CONFIG_HOME/screenpush/desks.json" <<'JSON'
 {"version":1,"desks":{"ZZZ9999+YYY8888":{"label":"Elsewhere","monitors":[],
  "computers":[{"id":"this","label":"This machine","host":null,
                "inputs":{"ZZZ9999":"0x0f","YYY8888":"0x0f"}}]}}}
@@ -100,7 +100,7 @@ JSON
 }
 
 @test "state reports no current computer while a monitor is not answering" {
-  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+  cat > "$XDG_CONFIG_HOME/screenpush/desks.json" <<'JSON'
 {"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office","monitors":[],
  "computers":[{"id":"this","label":"This machine","host":null,
                "inputs":{"AAA0001":"0x0f","BBB0002":"0x0f"}},
@@ -119,7 +119,7 @@ JSON
 }
 
 @test "state marks which computer is currently on screen" {
-  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+  cat > "$XDG_CONFIG_HOME/screenpush/desks.json" <<'JSON'
 {"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office","monitors":[],
  "computers":[{"id":"this","label":"This machine","host":null,
                "inputs":{"AAA0001":"0x0f","BBB0002":"0x0f"}},
@@ -210,7 +210,7 @@ CAPS
   # one, and every field read afterwards inherits both values joined by a
   # newline - including the code handed to `ddcutil setvcp`. The engine must
   # refuse outright rather than send a garbled code to a real monitor.
-  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+  cat > "$XDG_CONFIG_HOME/screenpush/desks.json" <<'JSON'
 {"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office",
  "monitors":[{"serial":"AAA0001","label":"Left","model":"STUB MONITOR"},
              {"serial":"BBB0002","label":"Right","model":"STUB MONITOR"}],
@@ -238,7 +238,7 @@ JSON
                    {"serial":"BBB0002","label":"Right","model":"STUB MONITOR"}],
        "computers":[{"id":"mac","label":"Mac","host":null,
                      "inputs":{"AAA0001":$code,"BBB0002":"0x11"}}]}}}' \
-    > "$XDG_CONFIG_HOME/monitor-input/desks.json"
+    > "$XDG_CONFIG_HOME/screenpush/desks.json"
   run "$ENGINE" switch mac
   [ "$status" -ne 0 ]
   [[ "$output" == *"malformed"* ]]
@@ -252,7 +252,7 @@ JSON
 }
 
 @test "reachable fails when the host does not answer" {
-  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+  cat > "$XDG_CONFIG_HOME/screenpush/desks.json" <<'JSON'
 {"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office","monitors":[],
  "computers":[{"id":"mac","label":"Mac","host":"192.0.2.1",
                "inputs":{"AAA0001":"0x11","BBB0002":"0x11"}}]}}}
@@ -269,23 +269,23 @@ JSON
 
 @test "save-desk creates desks.json when there is none" {
   echo '{"label":"Office","monitors":[],"computers":[]}' | "$ENGINE" save-desk
-  run jq -e '.desks["AAA0001+BBB0002"].label == "Office"' "$XDG_CONFIG_HOME/monitor-input/desks.json"
+  run jq -e '.desks["AAA0001+BBB0002"].label == "Office"' "$XDG_CONFIG_HOME/screenpush/desks.json"
   [ "$status" -eq 0 ]
 }
 
 @test "save-desk leaves other desks alone" {
-  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+  cat > "$XDG_CONFIG_HOME/screenpush/desks.json" <<'JSON'
 {"version":1,"desks":{"OTHER1+OTHER2":{"label":"Studio","monitors":[],"computers":[]}}}
 JSON
   echo '{"label":"Office","monitors":[],"computers":[]}' | "$ENGINE" save-desk
-  run jq -e '.desks | keys | length == 2' "$XDG_CONFIG_HOME/monitor-input/desks.json"
+  run jq -e '.desks | keys | length == 2' "$XDG_CONFIG_HOME/screenpush/desks.json"
   [ "$status" -eq 0 ]
-  run jq -e '.desks["OTHER1+OTHER2"].label == "Studio"' "$XDG_CONFIG_HOME/monitor-input/desks.json"
+  run jq -e '.desks["OTHER1+OTHER2"].label == "Studio"' "$XDG_CONFIG_HOME/screenpush/desks.json"
   [ "$status" -eq 0 ]
 }
 
 @test "save-desk rejects malformed json rather than truncating the file" {
-  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+  cat > "$XDG_CONFIG_HOME/screenpush/desks.json" <<'JSON'
 {"version":1,"desks":{"OTHER1+OTHER2":{"label":"Studio","monitors":[],"computers":[]}}}
 JSON
   run bash -c "echo 'not json' | '$ENGINE' save-desk"
@@ -294,7 +294,7 @@ JSON
   # also leaves the file untouched, so the survival check below passes either
   # way - this line is what makes the test about JSON validation.
   [[ "$output" == *"not valid JSON"* ]]
-  run jq -e '.desks["OTHER1+OTHER2"].label == "Studio"' "$XDG_CONFIG_HOME/monitor-input/desks.json"
+  run jq -e '.desks["OTHER1+OTHER2"].label == "Studio"' "$XDG_CONFIG_HOME/screenpush/desks.json"
   [ "$status" -eq 0 ]
 }
 
@@ -325,7 +325,7 @@ CAPS
 }
 
 @test "switch skips a monitor with no recorded input and moves the rest" {
-  cat > "$XDG_CONFIG_HOME/monitor-input/desks.json" <<'JSON'
+  cat > "$XDG_CONFIG_HOME/screenpush/desks.json" <<'JSON'
 {"version":1,"desks":{"AAA0001+BBB0002":{"label":"Office","monitors":[],
  "computers":[{"id":"mac","label":"Mac","host":null,
                "inputs":{"AAA0001":"0x11"}}]}}}

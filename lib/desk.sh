@@ -2,7 +2,7 @@
 # Desk file reading and desk identity.
 #
 # Not standalone: desk_key() calls present_serials(), which lives in
-# bin/monitor-input. Source this from there, not on its own.
+# bin/screenpush. Source this from there, not on its own.
 
 # The fingerprint of the desk in front of us: every serial present, sorted,
 # joined with '+'. Sorting matters because ddcutil's order is not stable

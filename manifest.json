@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.steveclarke.monitor-input",
-  "name": "Monitor switching",
+  "id": "io.github.steveclarke.screenpush",
+  "name": "Screen Push",
   "version": "0.1.0",
   "author": "Steve Clarke",
   "license": "MIT",
-  "description": "Send every monitor on your desk to another computer in one click, over DDC/CI.",
+  "description": "Push every screen on your desk to another computer in one click, over DDC/CI.",
   "kinds": ["bar-widget"],
   "entryPoints": { "barWidget": "Panel.qml" },
   "barWidget": {
-    "displayName": "Monitor switching",
-    "description": "Switch all monitors to a named computer.",
+    "displayName": "Screen Push",
+    "description": "Send all your screens to a named computer.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right"

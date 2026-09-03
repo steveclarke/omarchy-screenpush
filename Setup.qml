@@ -235,7 +235,7 @@ Item {
     // engine's own message and leave the grid exactly as it was.
     onExited: function(exitCode) {
       if (exitCode === 0) { root.closed(); return }
-      notifyProc.command = ["notify-send", "Monitor Input", String(saveStderr.text || "").trim()]
+      notifyProc.command = ["notify-send", "Screen Push", String(saveStderr.text || "").trim()]
       notifyProc.running = true
     }
   }
@@ -277,7 +277,7 @@ Item {
           Layout.fillWidth: true
           foreground: root.fg
           fontFamily: root.ff
-          title: "Monitor input"
+          title: "Screen Push"
           meta: (root.deskLabel !== "" ? root.deskLabel : "This desk").toUpperCase()
           detail: root.monitors.length + (root.monitors.length === 1 ? " screen" : " screens")
                   + " · " + root.computers.length + (root.computers.length === 1 ? " computer" : " computers")

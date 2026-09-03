@@ -66,7 +66,7 @@ Item {
     onExited: function(exitCode) {
       if (exitCode === 0) return
       root.clear()
-      notifyProc.command = ["notify-send", "Monitor Input", String(applyStderr.text || "").trim()]
+      notifyProc.command = ["notify-send", "Screen Push", String(applyStderr.text || "").trim()]
       notifyProc.running = true
     }
     onRunningChanged: {
@@ -86,7 +86,7 @@ Item {
     // on the input we moved it to and the person is looking at another machine.
     onExited: function(exitCode) {
       if (exitCode === 0) return
-      notifyProc.command = ["notify-send", "Monitor Input",
+      notifyProc.command = ["notify-send", "Screen Push",
                             "Could not bring the screen back: " + String(revertStderr.text || "").trim()]
       notifyProc.running = true
     }
