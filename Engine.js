@@ -8,7 +8,7 @@ function enginePath(resolveUrl) {
 }
 
 function parseState(text) {
-  var empty = { deskKey: "", known: false, computers: [], current: null, monitors: [], unmapped: [] }
+  var empty = { deskKey: "", known: false, computers: [], current: null, monitors: [], unmapped: [], live: {}, hint: "" }
   if (!text) return empty
   try {
     var parsed = JSON.parse(text)
@@ -18,7 +18,9 @@ function parseState(text) {
       computers: Array.isArray(parsed.computers) ? parsed.computers : [],
       current: parsed.current === null ? null : String(parsed.current),
       monitors: Array.isArray(parsed.monitors) ? parsed.monitors : [],
-      unmapped: Array.isArray(parsed.unmapped) ? parsed.unmapped : []
+      unmapped: Array.isArray(parsed.unmapped) ? parsed.unmapped : [],
+      live: (parsed.live && typeof parsed.live === "object") ? parsed.live : {},
+      hint: String(parsed.hint || "")
     }
   } catch (e) {
     return empty

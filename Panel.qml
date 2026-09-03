@@ -11,56 +11,48 @@ Panel {
   ipcTarget: "screenpush"
   manageIpc: false
 
-  // A bar widget must publish its own size. Item defaults to 0x0, so
-  // without these the bar allocates no width: the widget loads, runs and
-  // registers its IPC, and draws nothing. Every first-party bar widget
-  // sets these off its button.
+  // The bar sizes a widget from its root's implicit size; without these the
+  // slot is 0x0 and the widget is invisible and unclickable.
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
   readonly property string engine: Engine.enginePath(Qt.resolvedUrl)
+  readonly property string ff: bar ? bar.fontFamily : Style.font.family
   property var deskState: Engine.parseState("")
   property bool busy: false
   property string pendingComputer: ""
+  property string pendingSerial: ""
   property bool confirmOpen: false
+  readonly property bool loading: stateProc.running
+
+  // Which row is doing something, and what it says while it does it. A
+  // switch takes several seconds; the row it was asked on reports progress
+  // and, on refusal, the engine's own sentence, the way the network panel
+  // reports on the station row rather than in a toast.
+  property string statusKey: ""
+  property string statusText: ""
+  property bool statusUrgent: false
+
+  // "" is the computer list; "monitors" the screen picker; a serial that
+  // screen's computer list.
+  property string submenuSerial: ""
+
+  // Keyboard cursor over the visible rows, as every first-party panel.
+  property bool cursorActive: false
+  property int selectedIndex: 0
 
   function refresh() { stateProc.running = true }
 
-  // Ui/Panel has no broadcast(); this is Ui/BarWidget.qml:29-35. A bar surface
-  // exists per monitor, so an IPC call or a process exit reaches exactly one
-  // instance - the others keep showing stale state until they are reopened.
-  // Relay refreshes only. Broadcasting a side effect like sendTo would run the
-  // DDC switch once per screen, and calling this from inside refresh() would
-  // recurse forever, so the caller broadcasts and refresh() stays local.
+  // Ui/Panel has no broadcast(); this is Ui/BarWidget.qml:29-35. One bar
+  // surface exists per monitor, so a process exit reaches one instance and
+  // the others keep stale state until reopened. Relay refreshes only; never
+  // a side effect, and never from inside refresh().
   function broadcast(method) {
     var items = bar && typeof bar.moduleWidgets === "function"
       ? bar.moduleWidgets(moduleName) : [root]
     for (var i = 0; i < items.length; i++) {
       if (items[i] && typeof items[i][method] === "function") items[i][method]()
     }
-  }
-
-  // Ask first, then act. reachable exits 0 for a computer with no host
-  // recorded, so a desk that never named hostnames never sees a dialog.
-  //
-  // `busy` goes up HERE, not in reallySendTo. The rows are disabled by !busy,
-  // and without this they stay live while the reachability check is in flight:
-  // a second click would overwrite pendingComputer and the in-flight command,
-  // so an exit(0) from the newly-clicked reachable machine would suppress the
-  // dialog that the FIRST, unreachable, machine had earned - sending the whole
-  // desk to a machine that is not answering, with no confirmation. That is
-  // precisely the outcome this confirmation exists to prevent.
-  function sendTo(computerId) {
-    busy = true
-    pendingComputer = computerId
-    reachProc.command = [root.engine, "reachable", computerId]
-    reachProc.running = true
-  }
-
-  function reallySendTo(computerId) {
-    busy = true
-    switchProc.command = [root.engine, "switch", computerId]
-    switchProc.running = true
   }
 
   function labelFor(computerId) {
@@ -70,49 +62,133 @@ Panel {
     return computerId
   }
 
-  function sendMonitorTo(serial, computerId) {
-    busy = true
-    switchProc.command = [root.engine, "switch", computerId, "--monitor", serial]
-    switchProc.running = true
-  }
-
   function monitorLabel(serial) {
     for (var i = 0; i < deskState.monitors.length; i++) {
-      if (deskState.monitors[i].serial === serial) return deskState.monitors[i].label.toLowerCase()
+      if (deskState.monitors[i].serial === serial) return deskState.monitors[i].label
     }
     return "this screen"
   }
 
-  // "" is the computer list; a serial is that monitor's computer list.
-  property string submenuSerial: ""
+  function setStatus(key, text, urgent) { statusKey = key; statusText = text; statusUrgent = urgent === true }
+  function clearStatus() { statusKey = ""; statusText = ""; statusUrgent = false }
 
-  // Every piece of transient state resets here, not just the submenu. A
-  // confirmation left open when the popup is dismissed would otherwise still be
-  // open on the next summon, presenting a stale target the person has since
-  // stopped caring about - and the dialog names a machine, so a half-remembered
-  // "Send anyway" would go somewhere they did not just choose.
-  //
-  // busy resets here too. A switch takes a few seconds and closes the panel
-  // itself when it finishes, so a `busy` surviving into a fresh summon is
-  // stale by definition - and reopening the menu is the gesture someone makes
-  // when it has stopped responding, so it is the thing that should unstick it.
-  // Quickshell's Process has no errorOccurred signal, so a process that fails
-  // to start reports nothing at all, and this reset is the only thing that
-  // releases the menu in that case.
+  // Ask first, then act. `busy` goes up HERE so a second click cannot
+  // overwrite the in-flight reachability check and suppress the dialog the
+  // first, unreachable, machine had earned.
+  function sendTo(computerId, serial) {
+    busy = true
+    pendingComputer = computerId
+    pendingSerial = serial || ""
+    clearStatus()
+    setStatus(rowKey(computerId, pendingSerial), "Checking…", false)
+    watchdog.restart()
+    reachProc.command = [root.engine, "reachable", computerId]
+    reachProc.running = true
+  }
+
+  function reallySendTo(computerId) {
+    busy = true
+    setStatus(rowKey(computerId, pendingSerial), "Sending…", false)
+    watchdog.restart()
+    var cmd = [root.engine, "switch", computerId]
+    if (pendingSerial !== "") cmd = cmd.concat(["--screen", pendingSerial])
+    switchProc.command = cmd
+    switchProc.running = true
+  }
+
+  function rowKey(computerId, serial) { return "c:" + computerId + ":" + (serial || "") }
+
+  function openSetup() {
+    root.close()
+    if (setupLoader.active && setupLoader.item) setupLoader.item.open()
+    else setupLoader.active = true
+  }
+
+  // The rows on screen right now, as data, so the mouse, the keyboard cursor
+  // and the layout all read the same list.
+  readonly property var rows: {
+    var out = []
+    var s = deskState
+    if (!s.known) return out
+    if (submenuSerial === "") {
+      for (var i = 0; i < s.computers.length; i++) {
+        var c = s.computers[i]
+        out.push({ key: rowKey(c.id, ""), kind: "computer", id: c.id, label: c.label,
+                   icon: "\u{f0379}", current: c.id === s.current, trailing: "" })
+      }
+      if (s.monitors.length > 1)
+        out.push({ key: "nav:screens", kind: "screens", label: "Send one screen", icon: "", current: false, trailing: "\u{f0142}" })
+    } else if (submenuSerial === "monitors") {
+      for (var m = 0; m < s.monitors.length; m++)
+        out.push({ key: "m:" + s.monitors[m].serial, kind: "monitor", serial: s.monitors[m].serial,
+                   label: s.monitors[m].label, icon: "\u{f0379}", current: false, trailing: "\u{f0142}" })
+      out.push({ key: "nav:back", kind: "back", label: "Back", icon: "\u{f0141}", current: false, trailing: "" })
+    } else {
+      for (var j = 0; j < s.computers.length; j++) {
+        var cc = s.computers[j]
+        out.push({ key: rowKey(cc.id, submenuSerial), kind: "computer", id: cc.id, serial: submenuSerial,
+                   label: cc.label, icon: "\u{f0379}", current: (s.live[submenuSerial] || "") === (cc.inputs[submenuSerial] || "-"), trailing: "" })
+      }
+      out.push({ key: "nav:back", kind: "back", label: "Back", icon: "\u{f0141}", current: false, trailing: "" })
+    }
+    return out
+  }
+
+  readonly property string sectionTitle: {
+    if (submenuSerial === "") return "SEND SCREENS TO"
+    if (submenuSerial === "monitors") return "WHICH SCREEN"
+    return "SEND " + monitorLabel(submenuSerial).toUpperCase() + " TO"
+  }
+
+  readonly property string heroMeta: {
+    if (loading && !deskState.known) return "CHECKING SCREENS…"
+    if (!deskState.known) return "NOT SET UP"
+    if (deskState.current) return "SCREENS ARE ON " + labelFor(deskState.current).toUpperCase()
+    return "SPLIT ACROSS COMPUTERS"
+  }
+
+  function activate(row) {
+    if (!row || busy) return
+    if (row.kind === "computer") { if (!row.current) sendTo(row.id, row.serial) }
+    else if (row.kind === "screens") { submenuSerial = "monitors"; selectedIndex = 0 }
+    else if (row.kind === "monitor") { submenuSerial = row.serial; selectedIndex = 0 }
+    else if (row.kind === "back") { submenuSerial = (submenuSerial === "monitors" ? "" : "monitors"); selectedIndex = 0 }
+  }
+
+  function moveCursor(delta) {
+    if (rows.length === 0) return
+    if (!cursorActive) { cursorActive = true; return }
+    selectedIndex = Math.max(0, Math.min(rows.length - 1, selectedIndex + delta))
+  }
+
+  // Every piece of transient state resets on open: a stale confirmation, a
+  // stuck busy from a process that never reported, a submenu left open.
+  // Reopening is the gesture people make when it stops responding, so it is
+  // the thing that must unstick it.
   onOpenedChanged: {
     if (opened) {
       submenuSerial = ""
       confirmOpen = false
       pendingComputer = ""
+      pendingSerial = ""
       busy = false
+      cursorActive = false
+      selectedIndex = 0
+      clearStatus()
       refresh()
     }
   }
-  // No refresh on completion. A bar surface exists per monitor, so this ran
-  // once per screen at every shell start and hot reload - each call is two
-  // `ddcutil detect` passes plus a getvcp per monitor, concurrently on the same
-  // I2C buses. The collapsed widget renders a fixed glyph and shows no state,
-  // and the panel already refreshes in onOpenedChanged, so it bought nothing.
+
+  onConfirmOpenChanged: if (confirmOpen) confirm.selectedIndex = 0
+
+  // A Process that fails to spawn reports nothing at all. Nothing should sit
+  // on "Sending…" forever.
+  Timer {
+    id: watchdog
+    interval: 30000
+    repeat: false
+    onTriggered: if (root.busy) { root.busy = false; root.setStatus(root.statusKey, "Timed out. Try again.", true) }
+  }
 
   Process {
     id: stateProc
@@ -126,20 +202,19 @@ Panel {
   Process {
     id: reachProc
     stderr: StdioCollector { id: reachStderr; waitForEnd: true }
-    // Non-zero does not always mean "the machine is not answering". On a desk
-    // that was never set up the engine exits 1 with its own explanation, and
-    // asking "send the screens anyway?" would be both wrong and unanswerable.
-    // Only an actual reachability failure earns the dialog.
     onExited: function(exitCode) {
       if (exitCode === 0) { root.reallySendTo(root.pendingComputer); return }
       var reason = String(reachStderr.text || "").trim()
       if (reason !== "") {
+        // The engine had its own reason (desk not set up, no such id). That
+        // is not "the machine is not answering", so no dialog: show it.
+        watchdog.stop()
         root.busy = false
-        root.pendingComputer = ""
-        notifyProc.command = ["notify-send", "Screen Push", reason]
-        notifyProc.running = true
+        root.setStatus(root.statusKey, reason, true)
         return
       }
+      watchdog.stop()
+      root.setStatus(root.statusKey, "", false)
       root.confirmOpen = true
     }
   }
@@ -148,21 +223,24 @@ Panel {
     id: switchProc
     stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector { id: switchStderr; waitForEnd: true }
-    // A refusal - no DDC response, an unsupported code, an ambiguous
-    // computer id - exits non-zero with the reason on stderr, written by
-    // the engine to be read by a person. Closing unconditionally here would
-    // make every refusal look identical to a success: the menu just shuts
-    // and nothing moves, with no way to tell the two apart. So close only
-    // on success; on failure, leave the menu as it is and surface the
-    // engine's own message instead.
     onExited: function(exitCode) {
+      watchdog.stop()
       root.busy = false
-      if (exitCode === 0) { root.broadcast("refresh"); root.close(); return }
-      notifyProc.command = ["notify-send", "Screen Push", String(switchStderr.text || "").trim()]
-      notifyProc.running = true
+      if (exitCode === 0) {
+        root.clearStatus()
+        root.broadcast("refresh")
+        // The screens are now on another computer, so the person is not
+        // looking at this panel. A notification is the one thing they can see.
+        if (root.pendingSerial === "") {
+          notifyProc.command = ["notify-send", "Screen Push", "Screens sent to " + root.labelFor(root.pendingComputer) + "."]
+          notifyProc.running = true
+        }
+        root.close()
+        return
+      }
+      // Refused: nothing moved. Leave the menu up and say why, under the row.
+      root.setStatus(root.statusKey, String(switchStderr.text || "").trim(), true)
     }
-    // Failing closed is right here: nothing moved, so release the menu and
-    // let them try again, unlike reachProc's fail-open above.
   }
 
   Process { id: notifyProc }
@@ -174,43 +252,36 @@ Panel {
     function show(): void { root.open() }
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
-    // Broadcast: an IPC call lands on one instance, and a stale second screen
-    // is exactly what this exists to prevent.
     function refresh(): void { root.broadcast("refresh") }
-    // Opening setup without going through the menu. Worth having on its own
-    // terms - it gives the setup sheet a bindable entry point - and it is the
-    // only way to reach the sheet without a pointer.
-    // Open straight at the screen picker, for a key bound to the
-    // single-screen flow.
     function screens(): void { root.open(); root.submenuSerial = "monitors" }
-    function setup(): void {
-      root.close()
-      if (setupLoader.active && setupLoader.item) setupLoader.item.open()
-      else setupLoader.active = true
-    }
+    function setup(): void { root.openSetup() }
     function send(id: string): string { root.sendTo(id); return "ok" }
   }
 
-  // One menu line, built the way the bluetooth and network panels build a
-  // device row: left-aligned label, optional icon, optional trailing text or
-  // chevron on the right, hover fill, and a stronger fill for the current one.
+  // One menu line, built like a bluetooth device row: left label with an
+  // icon column, a right-hand slot for a status word, a chevron or a check,
+  // hover fill, stronger fill and a check for the current one.
   component MenuRow: CursorSurface {
     id: row
-    property string label: ""
-    property string icon: ""
-    property string trailing: ""
-    property bool dim: false
-    signal activated()
+    property var model: ({})
+    property int index: 0
+    property string status: ""
+    property bool statusUrgent: false
+    readonly property bool isCurrent: model.current === true
+    readonly property bool clickable: root.enabled && !root.busy && !isCurrent
 
     foreground: root.barForeground
+    current: isCurrent
+    hasCursor: root.cursorActive && root.selectedIndex === index
     implicitHeight: rowContent.implicitHeight + Style.spacing.rowPaddingX
-    opacity: enabled ? 1 : 0.5
+    opacity: (root.busy && root.statusKey !== model.key) ? 0.45 : 1
 
     MouseArea {
       anchors.fill: parent
       hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onClicked: if (row.enabled) row.activated()
+      cursorShape: row.clickable ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onContainsMouseChanged: if (containsMouse) { root.cursorActive = true; root.selectedIndex = row.index }
+      onClicked: if (row.clickable) root.activate(row.model)
     }
 
     Item {
@@ -220,14 +291,14 @@ Panel {
       anchors.verticalCenter: parent.verticalCenter
       anchors.leftMargin: Style.space(10)
       anchors.rightMargin: Style.space(10)
-      implicitHeight: Math.max(rowIcon.implicitHeight, rowLabel.implicitHeight)
+      implicitHeight: Math.max(rowIcon.implicitHeight, rowLabel.implicitHeight, Style.font.title)
 
       Text {
         id: rowIcon
-        visible: row.icon !== ""
-        text: row.icon
-        color: row.dim ? Qt.darker(row.foreground, 1.4) : row.foreground
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        visible: row.model.icon !== ""
+        text: row.model.icon || ""
+        color: row.foreground
+        font.family: root.ff
         font.pixelSize: Style.font.title
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
@@ -235,25 +306,30 @@ Panel {
 
       Text {
         id: rowLabel
-        text: row.label
-        color: row.dim ? Qt.darker(row.foreground, 1.4) : row.foreground
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
+        text: row.model.label + (row.isCurrent ? " · here now" : "")
+        color: row.foreground
+        font.family: root.ff
         font.pixelSize: Style.font.body
         elide: Text.ElideRight
-        anchors.left: rowIcon.visible ? rowIcon.right : parent.left
-        anchors.leftMargin: rowIcon.visible ? Style.space(10) : 0
-        anchors.right: rowTrailing.visible ? rowTrailing.left : parent.right
-        anchors.rightMargin: rowTrailing.visible ? Style.space(8) : 0
+        anchors.left: row.model.icon !== "" ? rowIcon.right : parent.left
+        anchors.leftMargin: row.model.icon !== "" ? Style.space(10) : 0
+        anchors.right: rowRight.left
+        anchors.rightMargin: Style.space(8)
         anchors.verticalCenter: parent.verticalCenter
       }
 
+      // Right slot: a status word while working, a check for the current
+      // computer, or a chevron for a row that leads somewhere.
       Text {
-        id: rowTrailing
-        visible: row.trailing !== ""
-        text: row.trailing
-        color: Qt.darker(row.foreground, 1.4)
-        font.family: root.bar ? root.bar.fontFamily : Style.font.family
-        font.pixelSize: Style.font.caption
+        id: rowRight
+        text: row.status !== "" && !row.statusUrgent ? row.status
+            : row.isCurrent ? "\u{f012c}"
+            : (row.model.trailing || "")
+        color: row.status !== "" ? row.foreground : Qt.darker(row.foreground, 1.4)
+        font.family: root.ff
+        font.pixelSize: row.status !== "" ? Style.font.caption : Style.font.subtitle
+        horizontalAlignment: Text.AlignRight
+        width: Math.max(Style.space(22), implicitWidth)
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
       }
@@ -264,17 +340,7 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    // BarIconButton already renders `text` through an anchors.filled
-    // OpticalGlyph, coloured from bar.barForeground with the bar's own colour
-    // animation (Ui/BarIconButton.qml:29-39). The hand-built iconComponent
-    // this replaces centred a glyph in a zero-sized Item, opted out of the
-    // active-state colouring and the theme transition, and sized off
-    // Style.font.icon rather than the bar's Style.bar.iconFont. Every
-    // first-party bar widget just sets text.
-    // Not the monitor glyph: omarchy.monitor uses U+F037A for a multi-screen
-    // desk, so the two icons were identical side by side. Swap arrows say
-    // what this does - move the screens - and nothing else on the bar uses it.
-    text: "󰓡"
+    text: "\u{f04e1}"
     onPressed: root.toggle()
   }
 
@@ -285,131 +351,123 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(300))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(420))
+    contentWidth: panel.fittedContentWidth(Style.space(380))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(520))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      // Stand down while the confirmation owns the keyboard, otherwise Esc
-      // closes the panel out from under a dialog that should have cancelled.
       blocked: root.confirmOpen
       onCloseRequested: root.close()
+      onMoveRequested: function(dx, dy) { if (dy !== 0) root.moveCursor(dy) }
+      onActivateRequested: if (root.cursorActive) root.activate(root.rows[root.selectedIndex])
+      onTabRequested: function(direction) { root.switchPanel(direction) }
 
-      ColumnLayout {
+      Column {
         id: column
-        anchors.fill: parent
-        spacing: Style.space(4)
+        anchors.left: parent.left
+        anchors.right: parent.right
+        spacing: Style.space(14)
 
-        PanelSectionHeader {
-          text: root.submenuSerial === "" ? "Send my screens to"
-              : root.submenuSerial === "monitors" ? "Which screen?"
-              : "Send " + root.monitorLabel(root.submenuSerial) + " to"
-        }
-
-        // A screen the desk has never seen. The desk still resolves (on
-        // purpose - see the engine's `unmapped`), but a switch leaves this
-        // screen where it is. Say so here, before the click, not after.
-        RowLayout {
-          Layout.fillWidth: true
-          visible: root.submenuSerial === "" && root.deskState.known && root.deskState.unmapped.length > 0
-          spacing: Style.space(8)
-          Text {
-            Layout.fillWidth: true
-            wrapMode: Text.WordWrap
-            text: root.deskState.unmapped.length === 1
-                  ? "1 screen here isn't set up. It will stay where it is."
-                  : root.deskState.unmapped.length + " screens here aren't set up. They will stay where they are."
-            color: Color.urgent
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
+        PanelHero {
+          foreground: root.barForeground
+          fontFamily: root.ff
+          title: "Screen Push"
+          meta: root.heroMeta
+          iconComponent: Component {
+            Text {
+              text: "\u{f04e1}"
+              color: root.barForeground
+              font.family: root.ff
+              font.pixelSize: Style.font.display
+            }
           }
-          Button {
-            text: "Set up"
-            onClicked: {
-              root.close()
-              if (setupLoader.active && setupLoader.item) setupLoader.item.open()
-              else setupLoader.active = true
+          trailingControl: Component {
+            PanelActionButton {
+              iconText: "\u{f0493}"
+              tooltipText: root.deskState.known ? "Edit this desk" : "Set up this desk"
+              foreground: root.barForeground
+              fontFamily: root.ff
+              onClicked: root.openSetup()
             }
           }
         }
 
-        Repeater {
-          model: root.submenuSerial === "" ? root.deskState.computers : []
-          delegate: MenuRow {
-            required property var modelData
-            Layout.fillWidth: true
-            enabled: !root.busy
-            label: modelData.label
-            current: modelData.id === root.deskState.current
-            trailing: current ? "here now" : ""
-            icon: "\u{f0379}"
-            onActivated: root.sendTo(modelData.id)
+        PanelSeparator { foreground: root.barForeground }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(10)
+
+          PanelSectionHeader {
+            text: root.sectionTitle
+            foreground: root.barForeground
+            fontFamily: root.ff
+            visible: root.deskState.known
           }
-        }
 
-        // Monitor picker: which screen, then which computer for that screen.
-        Repeater {
-          model: root.submenuSerial === "monitors" ? root.deskState.monitors : []
-          delegate: MenuRow {
-            required property var modelData
-            Layout.fillWidth: true
-            label: modelData.label
-            trailing: "\u{f0142}"
-            onActivated: root.submenuSerial = modelData.serial
+          // Not set up, or nothing answered: one sentence and the gear above.
+          Text {
+            visible: !root.deskState.known
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: root.loading ? "Checking screens…"
+                : root.deskState.hint !== "" ? root.deskState.hint
+                : "This desk isn't set up yet. Use the gear above to set it up."
+            color: Qt.darker(root.barForeground, 1.5)
+            font.family: root.ff
+            font.pixelSize: Style.font.bodySmall
           }
-        }
 
-        Repeater {
-          model: (root.submenuSerial !== "" && root.submenuSerial !== "monitors")
-                 ? root.deskState.computers : []
-          delegate: MenuRow {
-            required property var modelData
-            Layout.fillWidth: true
-            enabled: !root.busy
-            label: modelData.label
-            icon: "\u{f0379}"
-            onActivated: root.sendMonitorTo(root.submenuSerial, modelData.id)
+          // A screen the desk has never seen still shows; a switch just leaves
+          // it where it is. Say so before the click.
+          Text {
+            visible: root.submenuSerial === "" && root.deskState.known && root.deskState.unmapped.length > 0
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: (root.deskState.unmapped.length === 1
+                   ? "1 screen here isn't set up yet and will stay put."
+                   : root.deskState.unmapped.length + " screens here aren't set up yet and will stay put.")
+                  + " Use the gear above to add it."
+            color: Color.urgent
+            font.family: root.ff
+            font.pixelSize: Style.font.bodySmall
           }
-        }
 
-        PanelSeparator { Layout.fillWidth: true; foreground: root.barForeground }
+          Repeater {
+            model: root.rows
+            delegate: Column {
+              required property var modelData
+              required property int index
+              width: parent.width
+              spacing: Style.space(4)
 
-        MenuRow {
-          Layout.fillWidth: true
-          visible: root.submenuSerial === "" && root.deskState.monitors.length > 1
-          label: "Send one screen only"
-          trailing: "\u{f0142}"
-          onActivated: root.submenuSerial = "monitors"
-        }
+              MenuRow {
+                width: parent.width
+                model: modelData
+                index: parent.index
+                status: root.statusKey === modelData.key ? root.statusText : ""
+                statusUrgent: root.statusUrgent
+              }
 
-        MenuRow {
-          Layout.fillWidth: true
-          visible: root.submenuSerial !== ""
-          icon: "\u{f0141}"
-          label: "Back"
-          onActivated: root.submenuSerial = (root.submenuSerial === "monitors" ? "" : "monitors")
-        }
-
-        MenuRow {
-          Layout.fillWidth: true
-          icon: "\u{f0493}"
-          label: root.deskState.known ? "Set up this desk" : "Set up this desk"
-          dim: true
-          onActivated: {
-            root.close()
-            if (setupLoader.active && setupLoader.item) setupLoader.item.open()
-            else setupLoader.active = true
+              // The engine's refusal, under the row that asked for it.
+              Text {
+                visible: root.statusKey === modelData.key && root.statusUrgent && root.statusText !== ""
+                width: parent.width - Style.space(20)
+                x: Style.space(10)
+                wrapMode: Text.WordWrap
+                text: root.statusText
+                color: Color.urgent
+                font.family: root.ff
+                font.pixelSize: Style.font.caption
+              }
+            }
           }
         }
       }
 
-      // ConfirmDialog has no focus of its own - Ui/ConfirmDialog.qml:23 exposes
-      // handleKey(event) and expects the parent to route keys into it, which
-      // is what clipboard and menu do. Without this the dialog is mouse-only:
-      // Enter and the arrows do nothing, and Esc closes the whole panel
-      // instead of cancelling. PanelKeyCatcher sees keys first, so this takes
-      // focus while the dialog is up and hands it straight back after.
+      // ConfirmDialog has no focus of its own; keys must be routed into
+      // handleKey(). PanelKeyCatcher stands down (blocked) while it is up.
       Item {
         id: confirmKeys
         anchors.fill: parent
@@ -417,9 +475,7 @@ Panel {
         visible: root.confirmOpen
         onVisibleChanged: if (visible) forceActiveFocus(); else keyCatcher.forceActiveFocus()
         Keys.priority: Keys.BeforeItem
-        Keys.onPressed: function(event) {
-          if (confirm.handleKey(event)) event.accepted = true
-        }
+        Keys.onPressed: function(event) { if (confirm.handleKey(event)) event.accepted = true }
       }
 
       ConfirmDialog {
@@ -427,15 +483,11 @@ Panel {
         anchors.fill: parent
         z: 10
         opened: root.confirmOpen
-        message: root.labelFor(root.pendingComputer)
-                 + " is not responding. Send the screens anyway?"
+        message: root.labelFor(root.pendingComputer) + " isn't answering. It may be off or asleep. Send the screens anyway?"
         confirmText: "Send anyway"
         cancelText: "Cancel"
         onConfirmed: { root.confirmOpen = false; root.reallySendTo(root.pendingComputer) }
-        // Cancelling is the one path that ends without a switchProc run, so it is
-        // the one path that has to hand `busy` back itself. Miss it and the menu
-        // stays disabled until the panel is reopened.
-        onCanceled: { root.confirmOpen = false; root.pendingComputer = ""; root.busy = false }
+        onCanceled: { root.confirmOpen = false; root.pendingComputer = ""; root.pendingSerial = ""; root.busy = false; root.clearStatus() }
       }
     }
   }
@@ -446,23 +498,16 @@ Panel {
     source: Qt.resolvedUrl("Setup.qml")
     onStatusChanged: {
       if (status === Loader.Error) {
-        notifyProc.command = ["notify-send", "Screen Push",
-                              "The setup screen failed to load. See: journalctl --user -b | grep screenpush"]
+        notifyProc.command = ["notify-send", "Screen Push", "Couldn't open desk setup. Run: journalctl --user -b | grep screenpush"]
         notifyProc.running = true
         active = false
       }
     }
     onLoaded: {
       item.engine = root.engine
-      // KeyboardPanel positions itself against the bar icon, so Setup needs
-      // both the anchor and the bar host. Without them it warns and never
-      // builds, which reads as "the button does nothing".
       item.anchorItem = button
       item.bar = root.bar
-      // Deliberately NOT deactivating the Loader here. active = false destroys
-      // the item and every property on it, which is the whole half-filled
-      // grid. Closing hides the card; the draft stays in memory for the next
-      // open. It costs one idle QML object and saves the person's work.
+      // Not deactivating on close: that destroys the half-filled sheet.
       item.closed.connect(function() { root.refresh() })
       item.open()
     }
