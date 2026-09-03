@@ -89,7 +89,7 @@ own panel components.
     tools/lint-qml *.qml           # QML against the installed shell modules
     omarchy plugin validate .
 
-Tests never touch real monitors.
+Tests never touch real screens.
 
 ## License
 
