@@ -180,6 +180,9 @@ Panel {
     // Opening setup without going through the menu. Worth having on its own
     // terms - it gives the setup sheet a bindable entry point - and it is the
     // only way to reach the sheet without a pointer.
+    // Open straight at the screen picker, for a key bound to the
+    // single-screen flow.
+    function screens(): void { root.open(); root.submenuSerial = "monitors" }
     function setup(): void {
       root.close()
       if (setupLoader.active && setupLoader.item) setupLoader.item.open()

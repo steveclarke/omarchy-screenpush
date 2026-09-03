@@ -59,11 +59,45 @@ main() {
 # Helper Functions
 ################################################################################
 
-error() { echo "Error: ${1}" >&2; exit 1; }
+# No "Error:" prefix: every message here is shown to a person verbatim by the
+# panel, as a line under the row they clicked.
+error() { echo "${1}" >&2; exit 1; }
+
+# The desk in force for this invocation, so messages can name screens the way
+# the person named them. Set by the commands that resolve a desk.
+CURRENT_DESK="null"
+
+# "Left screen" rather than a serial nobody knows. Falls back to the serial
+# when the desk does not know the screen.
+screen_label() {
+  local l
+  l=$(printf '%s' "$CURRENT_DESK" | jq -r --arg s "$1" '[.monitors[]? | select(.serial == $s) | .label][0] // ""' 2>/dev/null || true)
+  [ -n "$l" ] && printf '%s' "$l" || printf '%s' "$1"
+}
+
+# "HDMI 1" rather than 0x11. Same table the setup sheet uses.
+input_label() {
+  case "$1" in
+    0x01) echo "VGA 1" ;; 0x03) echo "DVI 1" ;; 0x04) echo "DVI 2" ;;
+    0x0f) echo "DisplayPort 1" ;; 0x10) echo "DisplayPort 2" ;;
+    0x11) echo "HDMI 1" ;; 0x12) echo "HDMI 2" ;; 0x1b) echo "USB-C" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+# Why zero screens answered, when that is the case. Being outside the i2c
+# group is by far the usual reason, and ddcutil reports it as "no displays".
+no_screens_hint() {
+  if ! id -nG 2>/dev/null | tr ' ' '\n' | grep -qx i2c; then
+    echo "No screens answered. Add your user to the i2c group and log in again."
+  else
+    echo "No screens answered. Check DDC/CI is turned on in each screen's own menu."
+  fi
+}
 
 require_deps() {
-  command -v ddcutil >/dev/null || error "ddcutil not found"
-  command -v jq >/dev/null || error "jq not found"
+  command -v ddcutil >/dev/null || error "ddcutil isn't installed. Install it with: sudo pacman -S ddcutil"
+  command -v jq >/dev/null || error "jq isn't installed. Install it with: sudo pacman -S jq"
 }
 
 ################################################################################
@@ -111,7 +145,7 @@ verify_unique_serials() {
   local dupes
   dupes=$(present_serials | sort | uniq -d | paste -sd ', ' -)
   [ -z "$dupes" ] \
-    || error "two monitors report the same serial (${dupes}) - they cannot be told apart over DDC"
+    || error "Two screens report the same serial number (${dupes}), so Screen Push can't tell them apart."
 }
 
 # serial<TAB>model for every monitor answering DDC right now, one per line.
@@ -162,6 +196,10 @@ capabilities_for() {
 
 cmd_detect() {
   prime_detect
+  if [ -z "$(present_serials)" ]; then
+    jq -n -c --arg hint "$(no_screens_hint)" '{monitors: [], hint: $hint}'
+    return 0
+  fi
 
   local serial model codes
   {
@@ -226,10 +264,13 @@ cmd_state() {
   desk=$(desk_json "$key")
   live=$(live_inputs)
 
-  jq -n -c --arg key "$key" --argjson desk "$desk" --argjson live "$live" '
+  local hint=""
+  [ -n "$key" ] || hint=$(no_screens_hint)
+  jq -n -c --arg key "$key" --arg hint "$hint" --argjson desk "$desk" --argjson live "$live" '
     ($desk.computers // []) as $computers
     | {
         deskKey: $key,
+        hint: $hint,
         known: ($desk != null),
         label: ($desk.label // ""),
         monitors: ($desk.monitors // []),
@@ -277,8 +318,10 @@ verify_all_present() {
   for serial in "$@"; do
     [ -n "$(read_input "$serial")" ] || missing+=("$serial")
   done
-  [ ${#missing[@]} -eq 0 ] \
-    || error "not switching - no DDC response from: ${missing[*]}. Moving the rest would split the desk across computers."
+  [ ${#missing[@]} -eq 0 ] && return 0
+  local names=() m
+  for m in "${missing[@]}"; do names+=("$(screen_label "$m")"); done
+  error "Nothing was moved. $(IFS=,; echo "${names[*]}" | sed 's/,/, /g') isn't answering. Check it is on and DDC/CI is enabled in its menu."
 }
 
 # A code a panel does not have blacks it, with no display left to recover on.
@@ -297,9 +340,9 @@ verify_codes() {
     # computer id produces) would otherwise sail through the membership
     # check by matching one of its own halves.
     [[ "$code" =~ ^0x[0-9a-fA-F][0-9a-fA-F]$ ]] \
-      || error "${serial} has a malformed input code recorded - re-run setup for this desk"
+      || error "The saved input for $(screen_label "$serial") is damaged. Open Set up this desk and save it again."
     capabilities_for "$serial" | grep -qx "$code" \
-      || error "${serial} does not have input ${code} - re-run setup for this desk"
+      || error "$(screen_label "$serial") no longer offers $(input_label "$code"). Open Set up this desk and pick a new input for it."
   done
 }
 
@@ -327,13 +370,13 @@ cmd_switch() {
   shift || true
   while [ $# -gt 0 ]; do
     case "$1" in
-      --monitor)
-        [ $# -ge 2 ] || error "usage: screenpush switch <computer> [--monitor <serial>]"
+      --screen|--monitor)
+        [ $# -ge 2 ] || error "usage: screenpush switch <computer> [--screen <serial>]"
         only="$2"; shift 2 ;;
       *) error "unknown option: $1" ;;
     esac
   done
-  [ -n "$target" ] || error "usage: screenpush switch <computer> [--monitor <serial>]"
+  [ -n "$target" ] || error "usage: screenpush switch <computer> [--screen <serial>]"
 
   prime_detect
   verify_unique_serials
@@ -341,7 +384,8 @@ cmd_switch() {
   local key desk computer
   key=$(desk_key)
   desk=$(desk_json "$key")
-  [ "$desk" != "null" ] || error "this desk (${key}) has not been set up yet"
+  [ "$desk" != "null" ] || error "This desk hasn't been set up yet. Click the icon and choose Set up this desk."
+  CURRENT_DESK="$desk"
 
   # Select into an array first so a duplicate id in the desk file is caught
   # here rather than downstream. `select(...)` alone would emit one JSON
@@ -354,9 +398,9 @@ cmd_switch() {
   local matches match_count
   matches=$(printf '%s' "$desk" | jq -c --arg id "$target" '[.computers[] | select(.id == $id)]')
   match_count=$(printf '%s' "$matches" | jq 'length')
-  [ "$match_count" -gt 0 ] || error "no computer called '${target}' on this desk"
+  [ "$match_count" -gt 0 ] || error "There's no computer called '${target}' on this desk. Check its id in Set up this desk."
   [ "$match_count" -eq 1 ] \
-    || error "more than one computer is named '${target}' on this desk - fix desks.json or re-run setup"
+    || error "Two computers on this desk share the id '${target}'. Open Set up this desk and remove one."
   computer=$(printf '%s' "$matches" | jq -c '.[0]')
 
   local pairs=() serial code
@@ -371,7 +415,7 @@ cmd_switch() {
     pairs+=("$serial" "$code")
   done < <(present_serials)
 
-  [ ${#pairs[@]} -gt 0 ] || error "no monitors to switch"
+  [ ${#pairs[@]} -gt 0 ] || error "This computer has no screens set up. Open Set up this desk and pick an input for each screen."
 
   local serials=()
   for ((i = 0; i < ${#pairs[@]}; i += 2)); do serials+=("${pairs[i]}"); done
@@ -381,7 +425,7 @@ cmd_switch() {
 
   for ((i = 0; i < ${#pairs[@]}; i += 2)); do
     ddcutil --sn "${pairs[i]}" setvcp 60 "${pairs[i+1]}" \
-      || error "could not set input on ${pairs[i]} - recover with the monitor's own menu"
+      || error "Couldn't switch $(screen_label "${pairs[i]}"). Screens already moved stay moved; use its own menu to bring it back."
   done
 }
 
@@ -394,11 +438,13 @@ cmd_switch_raw() {
   [ -n "$serial" ] || error "usage: screenpush switch-raw <serial> <code>"
   [ -n "$code" ] || error "usage: screenpush switch-raw <serial> <code>"
 
+  prime_detect
+  CURRENT_DESK=$(desk_json "$(desk_key)")
   verify_all_present "$serial"
   verify_codes "$serial" "$code"
 
   ddcutil --sn "$serial" setvcp 60 "$code" \
-    || error "could not set input on ${serial} - recover with the monitor's own menu"
+    || error "Couldn't switch $(screen_label "$serial"). Use its own menu to switch it by hand."
 }
 
 # A computer that is off still has a named input, and sending the screens
@@ -409,9 +455,10 @@ cmd_reachable() {
   local target="${1:-}"
   [ -n "$target" ] || error "usage: screenpush reachable <computer>"
 
+  prime_detect
   local desk host
   desk=$(desk_json "$(desk_key)")
-  [ "$desk" != "null" ] || error "this desk has not been set up yet"
+  [ "$desk" != "null" ] || error "This desk hasn't been set up yet. Click the icon and choose Set up this desk."
 
   host=$(printf '%s' "$desk" | jq -r --arg id "$target" '[.computers[] | select(.id == $id)][0].host // ""')
   [ -n "$host" ] || return 0
@@ -427,10 +474,10 @@ cmd_save_desk() {
   local incoming key tmp
   incoming=$(cat)
   printf '%s' "$incoming" | jq -e . >/dev/null 2>&1 \
-    || error "save-desk: stdin is not valid JSON, refusing to write"
+    || error "Couldn't save: the desk data was unreadable. Try Save again."
 
   key=$(desk_key)
-  [ -n "$key" ] || error "no monitors detected, nothing to save"
+  [ -n "$key" ] || error "$(no_screens_hint) Nothing was saved."
 
   mkdir -p "$(dirname "$DESKS")"
   [ -f "$DESKS" ] || echo '{"version":1,"desks":{}}' > "$DESKS"
@@ -438,7 +485,7 @@ cmd_save_desk() {
   tmp=$(mktemp "$(dirname "$DESKS")/.desks.XXXXXX")
   jq --arg k "$key" --argjson desk "$incoming" \
     '.version = 1 | .desks[$k] = $desk' "$DESKS" > "$tmp" \
-    || { rm -f "$tmp"; error "save-desk: could not merge the new desk"; }
+    || { rm -f "$tmp"; error "Couldn't write the desk file. Check ~/.config/screenpush is writable and try Save again."; }
   mv "$tmp" "$DESKS"
 }
 

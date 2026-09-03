@@ -145,7 +145,7 @@ JSON
   echo "UNRESPONSIVE" > "$STUB_STATE/BBB0002"
   run "$ENGINE" switch mac
   [ "$status" -ne 0 ]
-  [[ "$output" == *"not switching"* ]]
+  [[ "$output" == *"Nothing was moved"* ]]
   [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]   # untouched
 }
 
@@ -169,7 +169,7 @@ BBB0002 0x0f 0x11 0x12
 CAPS
   run "$ENGINE" switch mac
   [ "$status" -ne 0 ]
-  [[ "$output" == *"does not have input"* ]]
+  [[ "$output" == *"no longer offers"* ]]
   [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]
 }
 
@@ -199,7 +199,7 @@ CAPS
   # Assert the reason, not just the failure. A missing subcommand also exits
   # non-zero and also leaves the panel alone, so without this the test passes
   # against an engine that cannot switch at all.
-  [[ "$output" == *"does not have input"* ]]
+  [[ "$output" == *"no longer offers"* ]]
   [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]
 }
 
@@ -221,7 +221,7 @@ CAPS
 JSON
   run "$ENGINE" switch mac
   [ "$status" -ne 0 ]
-  [[ "$output" == *"more than one computer"* ]]
+  [[ "$output" == *"share the id"* ]]
   [[ "$output" == *"mac"* ]]
   [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]   # untouched
   [ "$(cat "$STUB_STATE/BBB0002")" = "0x0f" ]   # untouched
@@ -241,7 +241,7 @@ JSON
     > "$XDG_CONFIG_HOME/screenpush/desks.json"
   run "$ENGINE" switch mac
   [ "$status" -ne 0 ]
-  [[ "$output" == *"malformed"* ]]
+  [[ "$output" == *"is damaged"* ]]
   [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]   # untouched
 }
 
@@ -293,7 +293,7 @@ JSON
   # Assert the reason. An unimplemented `save-desk` exits non-zero too, and
   # also leaves the file untouched, so the survival check below passes either
   # way - this line is what makes the test about JSON validation.
-  [[ "$output" == *"not valid JSON"* ]]
+  [[ "$output" == *"unreadable"* ]]
   run jq -e '.desks["OTHER1+OTHER2"].label == "Studio"' "$XDG_CONFIG_HOME/screenpush/desks.json"
   [ "$status" -eq 0 ]
 }
@@ -402,4 +402,33 @@ JSON
   run "$ENGINE" state
   [ "$status" -eq 0 ]
   echo "$output" | jq -e '.unmapped == []'
+}
+
+@test "refusals name the screen as the person named it, never the serial" {
+  save_office_desk
+  echo "UNRESPONSIVE" > "$STUB_STATE/BBB0002"
+  run "$ENGINE" switch mac
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Right isn't answering"* ]]
+  [[ "$output" != *"BBB0002"* ]]
+  [[ "$output" != Error:* ]]
+}
+
+@test "a code the screen lacks is reported as an input name, not hex" {
+  save_office_desk
+  cat > "$STUB_CAPS" <<'CAPS'
+AAA0001 0x0f 0x11 0x12
+BBB0002 0x0f 0x12
+CAPS
+  run "$ENGINE" switch mac
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Right no longer offers HDMI 1"* ]]
+}
+
+@test "detect explains itself when no screen answers" {
+  rm -f "$STUB_STATE"/*
+  run "$ENGINE" detect
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.monitors == []'
+  echo "$output" | jq -e '.hint | test("No screens answered")'
 }
