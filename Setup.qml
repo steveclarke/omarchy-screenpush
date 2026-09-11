@@ -202,11 +202,12 @@ Item {
   Process {
     id: detectProc
     command: [root.engine, "detect"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
+    stdout: BoundedParser { id: detectOut; onOverflow: detectProc.signal(15) }
+    onStarted: detectOut.reset()
+    onExited: function(exitCode) {
+      {
         var found = [], parsedDetect = {}
-        try { parsedDetect = JSON.parse(String(text || "")); found = parsedDetect.monitors || [] } catch (e) { found = [] }
+        try { parsedDetect = JSON.parse(detectOut.overflowed ? "" : detectOut.text); found = parsedDetect.monitors || [] } catch (e) { found = [] }
         // Left-to-right names are a guess the person can correct; ddcutil
         // order is not physical order. Two screens are Left and Right, not
         // Left and Middle - that read as a lost third screen.
@@ -228,11 +229,12 @@ Item {
   Process {
     id: stateProc
     command: [root.engine, "state"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
+    stdout: BoundedParser { id: stateOut; onOverflow: stateProc.signal(15) }
+    onStarted: stateOut.reset()
+    onExited: function(exitCode) {
+      {
         var parsed = {}
-        try { parsed = JSON.parse(String(text || "")) } catch (e) { parsed = {} }
+        try { parsed = JSON.parse(stateOut.overflowed ? "" : stateOut.text) } catch (e) { parsed = {} }
 
         if (parsed.known && parsed.computers && parsed.computers.length > 0) {
           root.computers = parsed.computers
@@ -272,8 +274,8 @@ Item {
     command: [root.engine, "save-desk"]
     stdinEnabled: true
     property string stdinText: ""
-    stderr: StdioCollector { id: saveStderr; waitForEnd: true }
-    onStarted: { write(stdinText); stdinEnabled = false }
+    stderr: BoundedParser { id: saveStderr; maxBytes: 8192 }
+    onStarted: { saveStderr.reset(); write(stdinText); stdinEnabled = false }
     // A failed save (a malformed payload, a disk that would not accept the
     // rename) must not close the sheet: closing unconditionally here would
     // discard the whole grid the person just filled in, with no way back
@@ -282,7 +284,7 @@ Item {
     onExited: function(exitCode) {
       root.saving = false
       if (exitCode === 0) { root.reloadOnOpen = true; root.close(); return }
-      root.sheetError = String(saveStderr.text || "").trim()
+      root.sheetError = saveStderr.text.trim()
     }
   }
 
@@ -332,7 +334,7 @@ Item {
               : ("THIS DESK · " + root.monitors.length + (root.monitors.length === 1 ? " SCREEN · " : " SCREENS · ")
                  + root.computers.length + (root.computers.length === 1 ? " COMPUTER" : " COMPUTERS"))
           iconComponent: Component {
-            Text { text: "\u{f04e1}"; color: root.fg; font.family: root.ff; font.pixelSize: Style.font.display }
+            Text { textFormat: Text.PlainText; text: "\u{f04e1}"; color: root.fg; font.family: root.ff; font.pixelSize: Style.font.display }
           }
           trailingControl: Component {
             PanelActionButton {
@@ -348,6 +350,7 @@ Item {
 
         // Nothing answered: say why, and stop there.
         Text {
+          textFormat: Text.PlainText
           visible: !root.detecting && root.monitors.length === 0
           width: parent.width
           wrapMode: Text.WordWrap
@@ -427,6 +430,7 @@ Item {
           PanelSectionHeader { text: "SCREENS"; foreground: root.fg; fontFamily: root.ff }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             wrapMode: Text.WordWrap
             text: "For each screen, pick the input each computer is plugged into. Try it switches the screen right now, and brings it back when pressed again."
@@ -448,12 +452,14 @@ Item {
               Column {
                 spacing: 0
                 Text {
+                  textFormat: Text.PlainText
                   text: screenBlock.monitor ? screenBlock.monitor.label : ""
                   color: root.fg
                   font.family: root.ff
                   font.pixelSize: Style.font.subtitle
                 }
                 Text {
+                  textFormat: Text.PlainText
                   text: screenBlock.monitor ? screenBlock.monitor.model : ""
                   color: Qt.darker(root.fg, 1.4)
                   font.family: root.ff
@@ -462,6 +468,7 @@ Item {
               }
 
               Text {
+                textFormat: Text.PlainText
                 visible: !screenBlock.switchable
                 width: parent.width
                 wrapMode: Text.WordWrap
@@ -512,6 +519,7 @@ Item {
 
         // Problems, in one place, above the buttons that caused them.
         Text {
+          textFormat: Text.PlainText
           visible: text !== ""
           width: parent.width
           wrapMode: Text.WordWrap

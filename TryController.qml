@@ -76,13 +76,15 @@ Item {
 
   Process {
     id: readProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
+    stdout: BoundedParser { id: readOut; onOverflow: readProc.signal(15) }
+    onStarted: readOut.reset()
+    onExited: function(exitCode) {
+      {
         var live = {}
-        try { live = (JSON.parse(String(text || "")).live) || {} } catch (e) { live = {} }
+        try { live = (JSON.parse(readOut.overflowed ? "" : readOut.text).live) || {} } catch (e) { live = {} }
         root.previousCode = live[root.serial] !== undefined ? live[root.serial] : ""
         if (root.previousCode === "") { root.error = "That screen isn't answering, so it wasn't tried."; root.clear(); return }
+        applyStderr.reset()
         applyProc.command = [root.engine, "switch-raw", root.serial, root.code]
         applyProc.running = true
       }
@@ -91,11 +93,11 @@ Item {
 
   Process {
     id: applyProc
-    stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { id: applyStderr; waitForEnd: true }
+    stdout: BoundedParser { maxBytes: 8192 }
+    stderr: BoundedParser { id: applyStderr; maxBytes: 8192 }
     onExited: function(exitCode) {
       root.busy = false
-      if (exitCode !== 0) { root.error = String(applyStderr.text || "").trim(); root.clear(); return }
+      if (exitCode !== 0) { root.error = applyStderr.text.trim(); root.clear(); return }
       // Only a one-screen desk needs the timer: with a second screen the
       // sheet is still visible and Bring it back is right there.
       if (root.monitorCount <= 1) { root.remaining = 15; autoRevert.restart(); countdown.restart() }
@@ -104,8 +106,8 @@ Item {
 
   Process {
     id: revertProc
-    stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { id: revertStderr; waitForEnd: true }
+    stdout: BoundedParser { maxBytes: 8192 }
+    stderr: BoundedParser { id: revertStderr; maxBytes: 8192 }
     onExited: function(exitCode) {
       if (exitCode !== 0) root.error = "Couldn't bring the screen back. Use its own menu to switch it."
       root.clear()

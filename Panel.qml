@@ -57,9 +57,9 @@ Panel {
 
   function labelFor(computerId) {
     for (var i = 0; i < deskState.computers.length; i++) {
-      if (deskState.computers[i].id === computerId) return deskState.computers[i].label
+      if (deskState.computers[i].id === computerId) return Engine.plain(deskState.computers[i].label)
     }
-    return computerId
+    return Engine.plain(computerId)
   }
 
   function monitorLabel(serial) {
@@ -82,6 +82,7 @@ Panel {
     clearStatus()
     setStatus(rowKey(computerId, pendingSerial), "Checking…", false)
     watchdog.restart()
+    reachStderr.reset()
     reachProc.command = [root.engine, "reachable", computerId]
     reachProc.running = true
   }
@@ -92,6 +93,7 @@ Panel {
     watchdog.restart()
     var cmd = [root.engine, "switch", computerId]
     if (pendingSerial !== "") cmd = cmd.concat(["--screen", pendingSerial])
+    switchStderr.reset()
     switchProc.command = cmd
     switchProc.running = true
   }
@@ -193,18 +195,17 @@ Panel {
   Process {
     id: stateProc
     command: [root.engine, "state"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.deskState = Engine.parseState(String(text || ""))
-    }
+    stdout: BoundedParser { id: stateOut; onOverflow: stateProc.signal(15) }
+    onStarted: stateOut.reset()
+    onExited: function(exitCode) { root.deskState = Engine.parseState(stateOut.overflowed ? "" : stateOut.text) }
   }
 
   Process {
     id: reachProc
-    stderr: StdioCollector { id: reachStderr; waitForEnd: true }
+    stderr: BoundedParser { id: reachStderr; maxBytes: 8192 }
     onExited: function(exitCode) {
       if (exitCode === 0) { root.reallySendTo(root.pendingComputer); return }
-      var reason = String(reachStderr.text || "").trim()
+      var reason = reachStderr.text.trim()
       if (reason !== "") {
         // The engine had its own reason (desk not set up, no such id). That
         // is not "the machine is not answering", so no dialog: show it.
@@ -221,8 +222,8 @@ Panel {
 
   Process {
     id: switchProc
-    stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { id: switchStderr; waitForEnd: true }
+    stdout: BoundedParser { maxBytes: 8192 }
+    stderr: BoundedParser { id: switchStderr; maxBytes: 8192 }
     onExited: function(exitCode) {
       watchdog.stop()
       root.busy = false
@@ -232,14 +233,14 @@ Panel {
         // The screens are now on another computer, so the person is not
         // looking at this panel. A notification is the one thing they can see.
         if (root.pendingSerial === "") {
-          notifyProc.command = ["notify-send", "Screen Push", "Screens sent to " + root.labelFor(root.pendingComputer) + "."]
+          notifyProc.command = ["/usr/bin/notify-send", "Screen Push", "Screens sent to " + root.labelFor(root.pendingComputer) + "."]
           notifyProc.running = true
         }
         root.close()
         return
       }
       // Refused: nothing moved. Leave the menu up and say why, under the row.
-      root.setStatus(root.statusKey, String(switchStderr.text || "").trim(), true)
+      root.setStatus(root.statusKey, switchStderr.text.trim(), true)
     }
   }
 
@@ -294,6 +295,7 @@ Panel {
       implicitHeight: Math.max(rowIcon.implicitHeight, rowLabel.implicitHeight, Style.font.title)
 
       Text {
+        textFormat: Text.PlainText
         id: rowIcon
         visible: row.model.icon !== ""
         text: row.model.icon || ""
@@ -305,6 +307,7 @@ Panel {
       }
 
       Text {
+        textFormat: Text.PlainText
         id: rowLabel
         text: row.model.label + (row.isCurrent ? " · here now" : "")
         color: row.foreground
@@ -321,6 +324,7 @@ Panel {
       // Right slot: a status word while working, a check for the current
       // computer, or a chevron for a row that leads somewhere.
       Text {
+        textFormat: Text.PlainText
         id: rowRight
         text: row.status !== "" && !row.statusUrgent ? row.status
             : row.isCurrent ? "\u{f012c}"
@@ -376,6 +380,7 @@ Panel {
           meta: root.heroMeta
           iconComponent: Component {
             Text {
+              textFormat: Text.PlainText
               text: "\u{f04e1}"
               color: root.barForeground
               font.family: root.ff
@@ -408,6 +413,7 @@ Panel {
 
           // Not set up, or nothing answered: one sentence and the gear above.
           Text {
+            textFormat: Text.PlainText
             visible: !root.deskState.known
             width: parent.width
             wrapMode: Text.WordWrap
@@ -422,6 +428,7 @@ Panel {
           // A screen the desk has never seen still shows; a switch just leaves
           // it where it is. Say so before the click.
           Text {
+            textFormat: Text.PlainText
             visible: root.submenuSerial === "" && root.deskState.known && root.deskState.unmapped.length > 0
             width: parent.width
             wrapMode: Text.WordWrap
@@ -452,6 +459,7 @@ Panel {
 
               // The engine's refusal, under the row that asked for it.
               Text {
+                textFormat: Text.PlainText
                 visible: root.statusKey === modelData.key && root.statusUrgent && root.statusText !== ""
                 width: parent.width - Style.space(20)
                 x: Style.space(10)
@@ -498,7 +506,7 @@ Panel {
     source: Qt.resolvedUrl("Setup.qml")
     onStatusChanged: {
       if (status === Loader.Error) {
-        notifyProc.command = ["notify-send", "Screen Push", "Couldn't open desk setup. Run: journalctl --user -b | grep screenpush"]
+        notifyProc.command = ["/usr/bin/notify-send", "Screen Push", "Couldn't open desk setup. Run: journalctl --user -b | grep screenpush"]
         notifyProc.running = true
         active = false
       }

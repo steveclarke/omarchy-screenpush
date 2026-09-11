@@ -112,13 +112,19 @@ require_deps() {
 # which run in a subshell, so an assignment made there is discarded.
 DETECT_CACHE=""
 
+# A monitor, or anything pretending to be one on the I2C bus, chooses how much
+# it answers with. Cap every read here, at the producer, so neither this script
+# nor the shell that reads its output holds an unbounded string.
+DDC_MAX_BYTES=131072
+ddc() { ddcutil "$@" 2>/dev/null | head -c "$DDC_MAX_BYTES" || true; }
+
 prime_detect() {
-  [ -n "$DETECT_CACHE" ] || DETECT_CACHE=$(ddcutil detect 2>/dev/null || true)
+  [ -n "$DETECT_CACHE" ] || DETECT_CACHE=$(ddc detect)
 }
 
 detect_raw() {
   if [ -n "$DETECT_CACHE" ]; then printf '%s\n' "$DETECT_CACHE"
-  else ddcutil detect 2>/dev/null || true
+  else ddc detect
   fi
 }
 
@@ -185,7 +191,7 @@ monitor_records() {
 # compares 0x-prefixed lowercase, and a parser that emitted "0f" would make
 # every capability check silently fail closed.
 capabilities_for() {
-  ddcutil --sn "$1" capabilities 2>/dev/null \
+  ddc --sn "$1" capabilities \
     | awk '
         /^[[:space:]]*Feature:[[:space:]]*60/ { inblock = 1; next }
         /^[[:space:]]*Feature:/               { inblock = 0 }
@@ -237,7 +243,7 @@ live_inputs() {
 }
 
 read_input() {
-  ddcutil --sn "$1" getvcp 60 2>/dev/null \
+  ddc --sn "$1" getvcp 60 \
     | grep -o 'sl=0x[0-9a-fA-F]*' | cut -d= -f2 | tr 'A-F' 'a-f' || true
 }
 

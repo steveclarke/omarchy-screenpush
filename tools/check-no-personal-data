@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Fail if a fixture, test or screenshot carries a real name from this machine.
+
+The repository is public. Fixtures use stand-ins, and the checks below assert on
+captured output: a bare `grep` in a shell script exits non-zero for "no match",
+which is the opposite of what a guard needs, and `! grep` under `set -e` never
+fails a test at all.
+"""
+import getpass
+import os
+import re
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SCANNED = ("*.qml", "*.js", "*.json", "*.cjs", "*.py", "*.md", "*.sh", "check-qml", "check-drag", "check-reader")
+ALLOWED_HOME = re.compile(r"/home/(user|you|USER)\b")
+PATTERNS = [
+    (re.compile(r"/home/[a-z][a-z0-9_-]*"), "a real home directory"),
+    (re.compile(r"\b[a-z0-9-]+\.(home|local|lan)\b"), "a private hostname"),
+]
+
+
+def files():
+    for path in ROOT.rglob("*"):
+        if ".git" in path.parts or not path.is_file():
+            continue
+        if any(path.match(pattern) for pattern in SCANNED):
+            yield path
+
+
+def main():
+    identities = [(getpass.getuser(), "this machine's username"), (socket.gethostname(), "this machine's hostname")]
+    identities = [(value, why) for value, why in identities if len(value) > 3 and value not in ("user", "steve-theme")]
+    problems = []
+    for path in files():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for pattern, why in PATTERNS:
+            for match in pattern.finditer(text):
+                if not ALLOWED_HOME.fullmatch(match.group(0)):
+                    problems.append(f"{path.relative_to(ROOT)}: {why}: {match.group(0)}")
+        for value, why in identities:
+            # Standalone only: the public plugin id and repository URL contain
+            # the author's account name and are meant to.
+            if re.search(r"(?<![A-Za-z0-9])" + re.escape(value) + r"(?![A-Za-z0-9])", text):
+                problems.append(f"{path.relative_to(ROOT)}: {why}: {value}")
+    # Screenshots are images; only their names are checked here. Look at them.
+    if problems:
+        print("Personal data in a public repository:", file=sys.stderr)
+        for problem in sorted(set(problems)):
+            print("  " + problem, file=sys.stderr)
+        return 1
+    print("No personal data in fixtures or tests")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
