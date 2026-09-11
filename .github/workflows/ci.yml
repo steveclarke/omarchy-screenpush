@@ -1,0 +1,11 @@
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: tools/check-agent-files
+      - run: python3 -c 'import json; json.load(open("manifest.json"))'

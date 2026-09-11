@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Fail if any agent-control or agent-instruction file is in the tree. Coding
+# agents discover these automatically when working in or above the installed
+# plugin folder, which gives them an instruction channel outside the plugin
+# runtime; the Omarchy marketplace refuses them. Checks the whole tree, case
+# insensitive, tracked and untracked (a release is whatever is committed, but
+# a stray local file would be committed next).
+set -euo pipefail
+root=${1:-$(cd "$(dirname "$0")/.." && pwd)}
+pattern='(^|/)(agents|claude|gemini|copilot-instructions|conventions|codex|agent|agent-instructions|\.?cursorrules|\.?windsurfrules|\.?clinerules|\.?roorules|\.?aider[^/]*|\.?goosehints)(\.[a-z]+)?$|(^|/)\.(claude|cursor|windsurf|clinerules|roo|kiro|continue|codex|gemini|junie|amazonq|augment|github/instructions|github/prompts|github/chatmodes)(/|$)|(^|/)\.github/copilot-instructions\.md$|(^|/)skills?/[^/]+/SKILL\.md$'
+found=$(cd "$root" && find . -path ./.git -prune -o -print | sed 's|^\./||' | grep -Ei "$pattern" || true)
+if [ -n "$found" ]; then
+  echo "Agent-instruction files are not allowed in the plugin tree:" >&2
+  echo "$found" | sed 's/^/  /' >&2
+  exit 1
+fi
+echo "No agent-instruction files"

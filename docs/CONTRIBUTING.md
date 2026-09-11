@@ -1,4 +1,4 @@
-# Screen Push - agent rules
+# Development guidance
 
 Omarchy 4 bar-widget plugin. `bin/screenpush` (bash + ddcutil) is the engine;
 the QML is the UI. Plugin id `io.github.steveclarke.screenpush` is permanent.
@@ -49,3 +49,7 @@ screenshots or history. Fixture serials look like `AAA0001`.
 
 Never file the marketplace submission; the owner does that.
 No AI attribution in commits. `master`, not `main`.
+
+## No agent-instruction files
+
+The marketplace refuses agent-control files anywhere in the installed tree (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.claude/`, and similar): coding agents pick them up when working in or above the plugin folder. Contributor guidance lives here, under an ordinary name. `tools/check-agent-files` enforces this in CI.
