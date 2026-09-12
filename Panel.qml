@@ -196,6 +196,18 @@ Panel {
     }
   }
 
+  // The bar icon's colour and optional computer name describe the desk even
+  // while the panel is closed, and a screen can be moved from the other computer
+  // or its own buttons. Read it at start and then now and again: every minute
+  // while the bar shows a name, every five otherwise.
+  Component.onCompleted: refresh()
+  Timer {
+    interval: root.prefs.barText === "computer" ? 60000 : 300000
+    running: !root.opened && !root.busy
+    repeat: true
+    onTriggered: if (!stateProc.running) root.refresh()
+  }
+
   // A Process that fails to spawn reports nothing at all. Nothing should sit on
   // "Sending…" forever.
   Timer {
