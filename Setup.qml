@@ -97,7 +97,7 @@ Item {
 
   readonly property var inputNames: ({
     "0x01": "VGA 1", "0x03": "DVI 1", "0x04": "DVI 2",
-    "0x0f": "DisplayPort 1", "0x10": "DisplayPort 2",
+    "0x0f": "DP 1", "0x10": "DP 2",
     "0x11": "HDMI 1", "0x12": "HDMI 2",
     "0x1b": "USB-C"
   })
