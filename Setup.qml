@@ -332,7 +332,9 @@ Item {
     id: srow
     property string title: ""
     property string hint: ""
-    default property alias control: slot.data
+    // A Component, not a default alias: a default alias on this root would also
+    // pull the row's own label column into the slot.
+    property Component control: null
     implicitHeight: Math.max(labels.implicitHeight, slot.height)
 
     Column {
@@ -347,12 +349,11 @@ Item {
       Text { textFormat: Text.PlainText; width: parent.width; wrapMode: Text.WordWrap; text: srow.hint
              color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption }
     }
-    Item {
+    Loader {
       id: slot
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
-      width: childrenRect.width
-      height: childrenRect.height
+      sourceComponent: srow.control
     }
   }
 
@@ -365,7 +366,7 @@ Item {
     centerOnBar: true
     focusTarget: keyCatcher
     contentWidth: sheet.fittedContentWidth(Style.space(460))
-    contentHeight: sheet.fittedContentHeight(column.implicitHeight, Style.space(760))
+    contentHeight: sheet.fittedContentHeight(column.implicitHeight, Style.space(900))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -634,33 +635,39 @@ Item {
             width: parent.width
             title: "Bar shows"
             hint: "Icon only, or the icon and the computer your screens are on"
-            Dropdown {
-              width: Style.space(170)
-              foreground: root.fg
-              fontFamily: root.ff
-              options: [{ label: "Icon only", value: "none" }, { label: "Icon and computer", value: "computer" }]
-              value: root.draftPrefs.barText
-              onChanged: function(v) { root.setDraft("barText", v) }
+            control: Component {
+              Dropdown {
+                width: Style.space(170)
+                foreground: root.fg
+                fontFamily: root.ff
+                options: [{ label: "Icon only", value: "none" }, { label: "Icon and computer", value: "computer" }]
+                value: root.draftPrefs.barText
+                onChanged: function(v) { root.setDraft("barText", v) }
+              }
             }
           }
           SettingRow {
             width: parent.width
             title: "Notify after switching"
             hint: "You'll be looking at another computer by then"
-            ToggleSwitch {
-              checked: root.draftPrefs.notifyAfterSwitch
-              foreground: root.fg
-              onToggled: root.setDraft("notifyAfterSwitch", !root.draftPrefs.notifyAfterSwitch)
+            control: Component {
+              ToggleSwitch {
+                checked: root.draftPrefs.notifyAfterSwitch
+                foreground: root.fg
+                onToggled: root.setDraft("notifyAfterSwitch", !root.draftPrefs.notifyAfterSwitch)
+              }
             }
           }
           SettingRow {
             width: parent.width
             title: "Ask before sending to a computer that isn't answering"
             hint: "Off sends straight away"
-            ToggleSwitch {
-              checked: root.draftPrefs.askWhenUnreachable
-              foreground: root.fg
-              onToggled: root.setDraft("askWhenUnreachable", !root.draftPrefs.askWhenUnreachable)
+            control: Component {
+              ToggleSwitch {
+                checked: root.draftPrefs.askWhenUnreachable
+                foreground: root.fg
+                onToggled: root.setDraft("askWhenUnreachable", !root.draftPrefs.askWhenUnreachable)
+              }
             }
           }
         }
