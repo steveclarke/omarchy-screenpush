@@ -83,6 +83,12 @@ that every screen answers before moving any of them, so a fault cannot leave
 the desk half switched. The bar widget and desk setup are QML on Omarchy's
 own panel components.
 
+Screens are found from the kernel's display connectors, not by `ddcutil detect`,
+and every `ddcutil` call names the one I2C bus that reaches its screen. A scan
+opens every bus on the machine, and on AMD RDNA4 cards (RX 9070, Radeon AI PRO
+R9700) two of those belong to the card's power controller; probing them
+crashes the card. Screen Push never opens a bus the kernel names `AMDGPU SMU`.
+
 ## Development
 
     bats test/screenpush.bats      # engine tests, against a fake ddcutil

@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Runs the real engine against a fake kernel display tree built from the
+# stub's state, so tests that add or remove $STUB_STATE files between runs
+# see those screens appear and disappear the way a real connector does.
+#
+#   $STUB_STATE/<serial>      a connected screen on its own DisplayPort bus
+#   $STUB_EXTRA_CONNECTORS    extra connected screens, "serial<TAB>model" per
+#                             line (serial may be blank), with no DDC state
+#   $STUB_SMU_CONNECTOR=1     one more connected screen whose only bus is
+#                             named as the GPU's power controller
+#
+# Bus numbers are written to $STUB_BUSMAP ("bus serial"), which the fake
+# ddcutil reads to know which screen a --bus call reaches.
+set -euo pipefail
+: "${STUB_STATE:?stub: STUB_STATE is not set - run this from the bats fixture}"
+
+root="$BATS_TEST_TMPDIR/sys"
+rm -rf "$root"
+drm="$root/class/drm" i2c="$root/bus/i2c/devices"
+mkdir -p "$drm" "$i2c"
+export SCREENPUSH_DRM_ROOT="$drm" SCREENPUSH_I2C_ROOT="$i2c"
+export STUB_BUSMAP="$BATS_TEST_TMPDIR/busmap"
+: > "$STUB_BUSMAP"
+
+# A 128-byte EDID base block with a model (fc) and, when given, a serial (ff)
+# descriptor, padded the way real panels pad them.
+edid() {
+  local serial="$1" model="$2"
+  descriptor() {
+    local tag="$1" text="$2" i
+    printf "\\x00\\x00\\x00\\x${tag}\\x00"
+    text="${text:0:13}"
+    printf '%s' "$text"
+    if [ ${#text} -lt 13 ]; then
+      printf '\n'
+      for ((i = ${#text} + 1; i < 13; i++)); do printf ' '; done
+    fi
+  }
+  printf '\x00\xff\xff\xff\xff\xff\xff\x00'
+  head -c 46 /dev/zero
+  descriptor fc "$model"
+  if [ -n "$serial" ]; then descriptor ff "$serial"; else head -c 18 /dev/zero; fi
+  head -c 38 /dev/zero
+}
+
+n=0
+add() {
+  local serial="$1" model="$2" bus="$3" busname="$4" dir
+  dir="$drm/card0-DP-$n"
+  mkdir -p "$dir/i2c-$bus" "$i2c/i2c-$bus"
+  echo connected > "$dir/status"
+  edid "$serial" "$model" > "$dir/edid"
+  echo "$busname" > "$i2c/i2c-$bus/name"
+  echo "$bus $serial" >> "$STUB_BUSMAP"
+  n=$((n + 1))
+}
+
+for f in "$STUB_STATE"/*; do
+  [ -e "$f" ] || continue
+  add "$(basename "$f")" "STUB MONITOR" $((10 + n)) "AMDGPU DM aux hw bus $n"
+done
+if [ -n "${STUB_EXTRA_CONNECTORS:-}" ] && [ -f "$STUB_EXTRA_CONNECTORS" ]; then
+  # Split by hand: a tab is IFS whitespace, so `read` would drop a blank
+  # leading serial and shift the model into its place.
+  while IFS= read -r line; do
+    add "${line%%$'\t'*}" "${line#*$'\t'}" $((10 + n)) "AMDGPU DM aux hw bus $n"
+  done < "$STUB_EXTRA_CONNECTORS"
+fi
+[ "${STUB_SMU_CONNECTOR:-}" != 1 ] || add "SMU0001" "SMU TRAP" 0 "AMDGPU SMU 0"
+
+# A disconnected connector with an EDID still cached: not a present screen.
+mkdir -p "$drm/card0-HDMI-A-1"
+echo disconnected > "$drm/card0-HDMI-A-1/status"
+edid "GONE001" "UNPLUGGED" > "$drm/card0-HDMI-A-1/edid"
+
+exec "$(dirname "$(readlink -f "$0")")/../../bin/screenpush" "$@"
