@@ -347,7 +347,7 @@ Item {
       Text { textFormat: Text.PlainText; width: parent.width; wrapMode: Text.WordWrap; text: srow.title
              color: root.fg; font.family: root.ff; font.pixelSize: Style.font.body }
       Text { textFormat: Text.PlainText; width: parent.width; wrapMode: Text.WordWrap; text: srow.hint
-             color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption }
+             color: root.dim; font.family: root.ff; font.pixelSize: Style.font.bodySmall }
     }
     Loader {
       id: slot
@@ -545,7 +545,7 @@ Item {
                   text: headCell.monitor ? headCell.monitor.model : ""
                   color: Qt.darker(root.fg, 1.4)
                   font.family: root.ff
-                  font.pixelSize: Style.font.caption
+                  font.pixelSize: Style.font.bodySmall
                 }
               }
             }
