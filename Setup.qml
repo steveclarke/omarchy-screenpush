@@ -247,13 +247,21 @@ Item {
         if (parsed.known && parsed.computers && parsed.computers.length > 0) {
           root.computers = parsed.computers
           root.deskLabel = parsed.label || ""
-          if (parsed.monitors && parsed.monitors.length === root.monitors.length) {
-            root.monitors = root.monitors.map(function(m) {
-              for (var i = 0; i < parsed.monitors.length; i++) {
-                if (parsed.monitors[i].serial === m.serial) m.label = parsed.monitors[i].label
+          // The saved desk carries the person's own screen names. Build fresh
+          // objects rather than mutating the ones detect produced: a property
+          // var hands back copies, so an in-place edit can be thrown away.
+          if (parsed.monitors && parsed.monitors.length > 0) {
+            var merged = []
+            for (var mi = 0; mi < root.monitors.length; mi++) {
+              var m = root.monitors[mi]
+              var label = m.label
+              for (var pi = 0; pi < parsed.monitors.length; pi++) {
+                if (String(parsed.monitors[pi].serial) === String(m.serial) && String(parsed.monitors[pi].label || "") !== "")
+                  label = String(parsed.monitors[pi].label)
               }
-              return m
-            })
+              merged.push({ serial: m.serial, label: label, model: m.model || "", inputs: m.inputs || [] })
+            }
+            root.monitors = merged
           }
           root.detecting = false
           root.sheetOpen = true
