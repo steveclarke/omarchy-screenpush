@@ -465,10 +465,17 @@ Item {
                 width: gridSection.cellWidth
                 spacing: 0
                 TextField {
+                  id: nameField
                   width: parent.width
                   verticalPadding: Style.spacing.controlPaddingY
                   placeholderText: "Screen name"
-                  Component.onCompleted: text = parent.monitor ? parent.monitor.label : ""
+                  // Detect names the screens by position; the saved desk arrives a
+                  // moment later and carries the person's own names. A field that
+                  // only reads its value once would show the guess and then save it
+                  // over the real name.
+                  readonly property string savedLabel: parent.monitor ? parent.monitor.label : ""
+                  onSavedLabelChanged: if (!activeFocus && text !== savedLabel) text = savedLabel
+                  Component.onCompleted: text = savedLabel
                   onTextEdited: root.setMonitorLabel(index, text)
                 }
                 Text {
