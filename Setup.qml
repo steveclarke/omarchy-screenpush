@@ -306,7 +306,7 @@ Item {
     open: root.sheetOpen
     centerOnBar: true
     focusTarget: keyCatcher
-    contentWidth: sheet.fittedContentWidth(Style.space(520))
+    contentWidth: sheet.fittedContentWidth(Style.space(460))
     contentHeight: sheet.fittedContentHeight(column.implicitHeight, Style.space(760))
 
     PanelKeyCatcher {
