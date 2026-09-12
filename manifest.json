@@ -6,13 +6,44 @@
   "author": "Steve Clarke",
   "license": "MIT",
   "description": "Send every screen on your desk to another computer in one click.",
-  "kinds": ["bar-widget"],
-  "entryPoints": { "barWidget": "Panel.qml" },
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
   "barWidget": {
     "displayName": "Screen Push",
     "description": "Send all your screens to another computer.",
     "category": "System",
     "allowMultiple": false,
-    "defaultSection": "right"
+    "defaultSection": "right",
+    "schema": [
+      {
+        "key": "barText",
+        "type": "enum",
+        "label": "Bar shows",
+        "options": [
+          "none",
+          "computer"
+        ],
+        "defaultValue": "none",
+        "description": "Icon only, or the icon and the computer the screens are on."
+      },
+      {
+        "key": "notifyAfterSwitch",
+        "type": "boolean",
+        "label": "Notify after switching",
+        "defaultValue": true,
+        "description": "A notification when every screen moves to another computer."
+      },
+      {
+        "key": "askWhenUnreachable",
+        "type": "boolean",
+        "label": "Ask before sending to a computer that isn't answering",
+        "defaultValue": true,
+        "description": "Off sends straight away."
+      }
+    ]
   }
 }

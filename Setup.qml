@@ -19,6 +19,20 @@ Item {
   // so the panel silently never appears. Panel.qml supplies both on load.
   property Item anchorItem: null
   property QtObject bar: null
+  // The panel that opened this sheet: it owns the bar widget's saved settings.
+  property var host: null
+
+  // Settings being edited. They are written with the desk on Save and dropped
+  // on Cancel, so the sheet has one commit point rather than two.
+  property var draftPrefs: ({ barText: "none", notifyAfterSwitch: true, askWhenUnreachable: true })
+  function loadDraftPrefs() {
+    if (host && host.prefs) draftPrefs = JSON.parse(JSON.stringify(host.prefs))
+  }
+  function setDraft(key, value) {
+    var next = JSON.parse(JSON.stringify(draftPrefs))
+    next[key] = value
+    draftPrefs = next
+  }
 
   // The bar's own foreground and font, so the sheet matches every other panel
   // on this theme. `bar` is injected after load, hence the guards.
@@ -50,6 +64,7 @@ Item {
 
   function open() {
     sheetError = ""
+    if (reloadOnOpen || monitors.length === 0) loadDraftPrefs()
     if (monitors.length > 0 && !reloadOnOpen) { sheetOpen = true; return }
     detect()
   }
@@ -299,12 +314,47 @@ Item {
     // engine's own message and leave the grid exactly as it was.
     onExited: function(exitCode) {
       root.saving = false
-      if (exitCode === 0) { root.reloadOnOpen = true; root.close(); return }
+      if (exitCode === 0) {
+        if (root.host) root.host.saveSettings(root.draftPrefs)
+        root.reloadOnOpen = true
+        root.close()
+        return
+      }
       root.sheetError = saveStderr.text.trim()
     }
   }
 
   Process { id: notifyProc }
+
+  // A setting: its name and one line on what it does on the left, the control
+  // on the right.
+  component SettingRow: Item {
+    id: srow
+    property string title: ""
+    property string hint: ""
+    default property alias control: slot.data
+    implicitHeight: Math.max(labels.implicitHeight, slot.height)
+
+    Column {
+      id: labels
+      anchors.left: parent.left
+      anchors.right: slot.left
+      anchors.rightMargin: Style.space(12)
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(2)
+      Text { textFormat: Text.PlainText; width: parent.width; wrapMode: Text.WordWrap; text: srow.title
+             color: root.fg; font.family: root.ff; font.pixelSize: Style.font.body }
+      Text { textFormat: Text.PlainText; width: parent.width; wrapMode: Text.WordWrap; text: srow.hint
+             color: root.dim; font.family: root.ff; font.pixelSize: Style.font.caption }
+    }
+    Item {
+      id: slot
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      width: childrenRect.width
+      height: childrenRect.height
+    }
+  }
 
   KeyboardPanel {
     id: sheet
@@ -566,6 +616,51 @@ Item {
                   }
                 }
               }
+            }
+          }
+        }
+
+        PanelSeparator { visible: root.monitors.length > 0; foreground: root.fg }
+
+        // ---------- Settings ----------
+        Column {
+          visible: root.monitors.length > 0
+          width: parent.width
+          spacing: Style.space(12)
+
+          PanelSectionHeader { text: "SETTINGS"; foreground: root.fg; fontFamily: root.ff }
+
+          SettingRow {
+            width: parent.width
+            title: "Bar shows"
+            hint: "Icon only, or the icon and the computer your screens are on"
+            Dropdown {
+              width: Style.space(170)
+              foreground: root.fg
+              fontFamily: root.ff
+              options: [{ label: "Icon only", value: "none" }, { label: "Icon and computer", value: "computer" }]
+              value: root.draftPrefs.barText
+              onChanged: function(v) { root.setDraft("barText", v) }
+            }
+          }
+          SettingRow {
+            width: parent.width
+            title: "Notify after switching"
+            hint: "You'll be looking at another computer by then"
+            ToggleSwitch {
+              checked: root.draftPrefs.notifyAfterSwitch
+              foreground: root.fg
+              onToggled: root.setDraft("notifyAfterSwitch", !root.draftPrefs.notifyAfterSwitch)
+            }
+          }
+          SettingRow {
+            width: parent.width
+            title: "Ask before sending to a computer that isn't answering"
+            hint: "Off sends straight away"
+            ToggleSwitch {
+              checked: root.draftPrefs.askWhenUnreachable
+              foreground: root.fg
+              onToggled: root.setDraft("askWhenUnreachable", !root.draftPrefs.askWhenUnreachable)
             }
           }
         }

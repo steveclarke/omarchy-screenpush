@@ -15,8 +15,8 @@ Panel {
 
   // The bar sizes a widget from its root's implicit size; without these the
   // slot is 0x0 and the widget is invisible and unclickable.
-  implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
+  implicitWidth: barButton.implicitWidth
+  implicitHeight: barButton.implicitHeight
 
   readonly property string engine: Engine.enginePath(Qt.resolvedUrl)
   readonly property string ff: bar ? bar.fontFamily : Style.font.family
@@ -39,6 +39,11 @@ Panel {
   // Keyboard cursor over the computer rows, as every first-party panel.
   property bool cursorActive: false
   property int selectedIndex: 0
+
+  readonly property var prefs: Engine.prefs(settings)
+  readonly property string barName: Engine.barLabel(deskState, views)
+  // Whichever bar control is showing: icon only, or icon and computer name.
+  readonly property Item barButton: prefs.barText === "computer" && barName !== "" ? textButton : button
 
   readonly property color ink: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(ink, 1.4)
@@ -135,6 +140,16 @@ Panel {
     clearStatus()
   }
 
+  // The shell replaces this widget's whole entry, so every setting it already
+  // holds is carried along with the ones being changed.
+  function saveSettings(changes) {
+    var api = bar && bar.shell ? bar.shell : null
+    if (!api || typeof api.updateEntryInline !== "function") return false
+    var merged = Object.assign({}, settings || {}, changes || {})
+    delete merged.id
+    return api.updateEntryInline(moduleName, merged)
+  }
+
   function rowKey(computerId, serial) { return "c:" + computerId + ":" + (serial || "") }
 
   function openSetup() {
@@ -213,6 +228,7 @@ Panel {
         return
       }
       root.clearStatus()
+      if (!root.prefs.askWhenUnreachable) { root.reallySendTo(root.pendingComputer); return }
       root.unreachable = root.pendingComputer
     }
   }
@@ -232,8 +248,10 @@ Panel {
         if (wasAll) {
           // Every screen is now on another computer, so the person is not
           // looking at this panel. A notification is the one thing they can see.
-          notifyProc.command = ["/usr/bin/notify-send", "Screen Push", "Screens sent to " + target + "."]
-          notifyProc.running = true
+          if (root.prefs.notifyAfterSwitch) {
+            notifyProc.command = ["/usr/bin/notify-send", "Screen Push", "Screens sent to " + target + "."]
+            notifyProc.running = true
+          }
           root.close()
         }
         return
@@ -437,9 +455,20 @@ Panel {
     }
   }
 
+  WidgetButton {
+    id: textButton
+    anchors.fill: parent
+    visible: root.barButton === textButton
+    bar: root.bar
+    text: "\u{f04e1}  " + Engine.plain(root.barName)
+    foreground: button.foreground
+    onPressed: root.toggle()
+  }
+
   BarIconButton {
     id: button
     anchors.fill: parent
+    visible: root.barButton === button
     bar: root.bar
     text: "\u{f04e1}"
     // State lives in the glyph colour: accent while a switch is running, urgent
@@ -453,7 +482,7 @@ Panel {
 
   KeyboardPanel {
     id: panel
-    anchorItem: button
+    anchorItem: root.barButton
     owner: root
     bar: root.bar
     open: root.opened
@@ -685,7 +714,8 @@ Panel {
     }
     onLoaded: {
       item.engine = root.engine
-      item.anchorItem = button
+      item.anchorItem = root.barButton
+      item.host = root
       item.bar = root.bar
       // Not deactivating on close: that destroys the half-filled sheet.
       item.closed.connect(function() { root.refresh() })

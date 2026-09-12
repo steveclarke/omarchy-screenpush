@@ -129,3 +129,24 @@ function hero(state, views, ctx) {
   }
   return { title: "Screens are split", meta: counts, detail: hint, tone: "normal" }
 }
+
+// Bar widget settings as saved in shell.json. `omarchy bar set` writes every
+// value as a string, so "false" has to read as false rather than as truthy.
+function prefs(settings) {
+  var s = settings || {}
+  function bool(v, d) { return typeof v === "boolean" ? v : v === "true" ? true : v === "false" ? false : d }
+  return {
+    barText: s.barText === "computer" ? "computer" : "none",
+    notifyAfterSwitch: bool(s.notifyAfterSwitch, true),
+    askWhenUnreachable: bool(s.askWhenUnreachable, true)
+  }
+}
+
+// The text beside the bar icon when the bar shows the computer: its name while
+// every screen is on one computer, "Split" otherwise, nothing before setup.
+function barLabel(state, views) {
+  if (!state.known || views.length === 0) return ""
+  var first = views[0].computerId
+  for (var i = 0; i < views.length; i++) if (views[i].computerId !== first || first === "") return "Split"
+  return labelOf(state, first)
+}
