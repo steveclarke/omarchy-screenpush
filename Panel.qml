@@ -1,8 +1,10 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Layouts
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import qs.Ui as Ui
 import "Engine.js" as Engine
 
 Panel {
@@ -22,31 +24,59 @@ Panel {
   property bool busy: false
   property string pendingComputer: ""
   property string pendingSerial: ""
-  property bool confirmOpen: false
+  // The computer that did not answer a ping. Non-empty puts the message box
+  // up with its own Send anyway; there is no modal dialog any more.
+  property string unreachable: ""
   readonly property bool loading: stateProc.running
 
-  // Which row is doing something, and what it says while it does it. A
-  // switch takes several seconds; the row it was asked on reports progress
-  // and, on refusal, the engine's own sentence, the way the network panel
-  // reports on the station row rather than in a toast.
+  // Which row is doing something and what it says while it does it. A switch
+  // takes several seconds; the row it was asked on reports progress and, on
+  // refusal, the engine's own sentence.
   property string statusKey: ""
   property string statusText: ""
   property bool statusUrgent: false
 
-  // "" is the computer list; "monitors" the screen picker; a serial that
-  // screen's computer list.
-  property string submenuSerial: ""
-
-  // Keyboard cursor over the visible rows, as every first-party panel.
+  // Keyboard cursor over the computer rows, as every first-party panel.
   property bool cursorActive: false
   property int selectedIndex: 0
+
+  readonly property color ink: bar ? bar.foreground : Color.foreground
+  readonly property color dim: Qt.darker(ink, 1.4)
+  readonly property color muted: Color.muted
+  readonly property color urgent: bar ? bar.urgent : Color.urgent
+  readonly property color accent: Color.accent
+  readonly property color track: Qt.rgba(ink.r, ink.g, ink.b, 0.12)
+
+  // What the desk looks like right now: one entry per screen, in the desk's
+  // own left-to-right order, carrying the computer it is showing.
+  readonly property var views: Engine.screenViews(deskState)
+  readonly property var heroData: Engine.hero(deskState, views, {
+    loading: root.loading && !root.deskState.known,
+    busy: root.busy,
+    sendingSerial: root.pendingSerial,
+    sendingTo: root.pendingComputer,
+    unreachable: root.unreachable
+  })
+  readonly property color stateColor: heroData.tone === "urgent" ? urgent
+                                    : heroData.tone === "accent" ? accent
+                                    : heroData.tone === "dim" ? dim : ink
+  readonly property int unmappedCount: {
+    var n = 0
+    for (var i = 0; i < views.length; i++) if (views[i].unmapped) n++
+    return n
+  }
+  readonly property bool allAway: {
+    if (!deskState.known || views.length === 0) return false
+    for (var i = 0; i < views.length; i++) if (views[i].here) return false
+    return true
+  }
 
   function refresh() { stateProc.running = true }
 
   // Ui/Panel has no broadcast(); this is Ui/BarWidget.qml:29-35. One bar
-  // surface exists per monitor, so a process exit reaches one instance and
-  // the others keep stale state until reopened. Relay refreshes only; never
-  // a side effect, and never from inside refresh().
+  // surface exists per monitor, so a process exit reaches one instance and the
+  // others keep stale state until reopened. Relay refreshes only; never a side
+  // effect, and never from inside refresh().
   function broadcast(method) {
     var items = bar && typeof bar.moduleWidgets === "function"
       ? bar.moduleWidgets(moduleName) : [root]
@@ -55,28 +85,18 @@ Panel {
     }
   }
 
-  function labelFor(computerId) {
-    for (var i = 0; i < deskState.computers.length; i++) {
-      if (deskState.computers[i].id === computerId) return Engine.plain(deskState.computers[i].label)
-    }
-    return Engine.plain(computerId)
-  }
-
-  function monitorLabel(serial) {
-    for (var i = 0; i < deskState.monitors.length; i++) {
-      if (deskState.monitors[i].serial === serial) return deskState.monitors[i].label
-    }
-    return "this screen"
-  }
+  function labelFor(computerId) { return Engine.labelOf(deskState, computerId) }
 
   function setStatus(key, text, urgent) { statusKey = key; statusText = text; statusUrgent = urgent === true }
   function clearStatus() { statusKey = ""; statusText = ""; statusUrgent = false }
 
-  // Ask first, then act. `busy` goes up HERE so a second click cannot
-  // overwrite the in-flight reachability check and suppress the dialog the
-  // first, unreachable, machine had earned.
+  // Ask first, then act. `busy` goes up HERE so a second click cannot overwrite
+  // the in-flight reachability check and suppress the message the first,
+  // unreachable, machine had earned.
   function sendTo(computerId, serial) {
+    if (busy || computerId === "") return
     busy = true
+    unreachable = ""
     pendingComputer = computerId
     pendingSerial = serial || ""
     clearStatus()
@@ -87,8 +107,17 @@ Panel {
     reachProc.running = true
   }
 
+  // Clicking a screen sends that screen to the next computer in the desk's
+  // order, which on a two-computer desk is simply the other one.
+  function sendScreen(view) {
+    if (!view || busy || !deskState.known) return
+    if (view.unmapped) { openSetup(); return }
+    sendTo(Engine.nextComputer(deskState, view.computerId), view.serial)
+  }
+
   function reallySendTo(computerId) {
     busy = true
+    unreachable = ""
     setStatus(rowKey(computerId, pendingSerial), "Sending…", false)
     watchdog.restart()
     var cmd = [root.engine, "switch", computerId]
@@ -96,6 +125,14 @@ Panel {
     switchStderr.reset()
     switchProc.command = cmd
     switchProc.running = true
+  }
+
+  function cancelSend() {
+    unreachable = ""
+    pendingComputer = ""
+    pendingSerial = ""
+    busy = false
+    clearStatus()
   }
 
   function rowKey(computerId, serial) { return "c:" + computerId + ":" + (serial || "") }
@@ -106,55 +143,24 @@ Panel {
     else setupLoader.active = true
   }
 
-  // The rows on screen right now, as data, so the mouse, the keyboard cursor
-  // and the layout all read the same list.
+  // The computer rows on screen right now, as data, so the mouse, the keyboard
+  // cursor and the layout all read the same list.
   readonly property var rows: {
     var out = []
-    var s = deskState
-    if (!s.known) return out
-    if (submenuSerial === "") {
-      for (var i = 0; i < s.computers.length; i++) {
-        var c = s.computers[i]
-        out.push({ key: rowKey(c.id, ""), kind: "computer", id: c.id, label: c.label,
-                   icon: "\u{f0379}", current: c.id === s.current, trailing: "" })
-      }
-      if (s.monitors.length > 1)
-        out.push({ key: "nav:screens", kind: "screens", label: "Send one screen", icon: "", current: false, trailing: "\u{f0142}" })
-    } else if (submenuSerial === "monitors") {
-      for (var m = 0; m < s.monitors.length; m++)
-        out.push({ key: "m:" + s.monitors[m].serial, kind: "monitor", serial: s.monitors[m].serial,
-                   label: s.monitors[m].label, icon: "\u{f0379}", current: false, trailing: "\u{f0142}" })
-      out.push({ key: "nav:back", kind: "back", label: "Back", icon: "\u{f0141}", current: false, trailing: "" })
-    } else {
-      for (var j = 0; j < s.computers.length; j++) {
-        var cc = s.computers[j]
-        out.push({ key: rowKey(cc.id, submenuSerial), kind: "computer", id: cc.id, serial: submenuSerial,
-                   label: cc.label, icon: "\u{f0379}", current: (s.live[submenuSerial] || "") === (cc.inputs[submenuSerial] || "-"), trailing: "" })
-      }
-      out.push({ key: "nav:back", kind: "back", label: "Back", icon: "\u{f0141}", current: false, trailing: "" })
+    if (!deskState.known) return out
+    for (var i = 0; i < deskState.computers.length; i++) {
+      var c = deskState.computers[i]
+      var mine = true
+      for (var v = 0; v < views.length; v++) if (views[v].computerId !== String(c.id)) mine = false
+      out.push({ key: rowKey(c.id, ""), id: String(c.id), label: Engine.plain(c.label),
+                 icon: "\u{f0379}", current: mine && views.length > 0 })
     }
     return out
   }
 
-  readonly property string sectionTitle: {
-    if (submenuSerial === "") return "SEND SCREENS TO"
-    if (submenuSerial === "monitors") return "WHICH SCREEN"
-    return "SEND " + monitorLabel(submenuSerial).toUpperCase() + " TO"
-  }
-
-  readonly property string heroMeta: {
-    if (loading && !deskState.known) return "CHECKING SCREENS…"
-    if (!deskState.known) return "NOT SET UP"
-    if (deskState.current) return "SCREENS ARE ON " + labelFor(deskState.current).toUpperCase()
-    return "SPLIT ACROSS COMPUTERS"
-  }
-
   function activate(row) {
     if (!row || busy) return
-    if (row.kind === "computer") { if (!row.current) sendTo(row.id, row.serial) }
-    else if (row.kind === "screens") { submenuSerial = "monitors"; selectedIndex = 0 }
-    else if (row.kind === "monitor") { submenuSerial = row.serial; selectedIndex = 0 }
-    else if (row.kind === "back") { submenuSerial = (submenuSerial === "monitors" ? "" : "monitors"); selectedIndex = 0 }
+    if (!row.current) sendTo(row.id, "")
   }
 
   function moveCursor(delta) {
@@ -163,28 +169,20 @@ Panel {
     selectedIndex = Math.max(0, Math.min(rows.length - 1, selectedIndex + delta))
   }
 
-  // Every piece of transient state resets on open: a stale confirmation, a
-  // stuck busy from a process that never reported, a submenu left open.
-  // Reopening is the gesture people make when it stops responding, so it is
-  // the thing that must unstick it.
+  // Every piece of transient state resets on open: a stuck busy from a process
+  // that never reported, a message box left up. Reopening is the gesture people
+  // make when it stops responding, so it is the thing that must unstick it.
   onOpenedChanged: {
     if (opened) {
-      submenuSerial = ""
-      confirmOpen = false
-      pendingComputer = ""
-      pendingSerial = ""
-      busy = false
+      cancelSend()
       cursorActive = false
       selectedIndex = 0
-      clearStatus()
       refresh()
     }
   }
 
-  onConfirmOpenChanged: if (confirmOpen) confirm.selectedIndex = 0
-
-  // A Process that fails to spawn reports nothing at all. Nothing should sit
-  // on "Sending…" forever.
+  // A Process that fails to spawn reports nothing at all. Nothing should sit on
+  // "Sending…" forever.
   Timer {
     id: watchdog
     interval: 30000
@@ -205,18 +203,17 @@ Panel {
     stderr: BoundedParser { id: reachStderr; maxBytes: 8192 }
     onExited: function(exitCode) {
       if (exitCode === 0) { root.reallySendTo(root.pendingComputer); return }
+      watchdog.stop()
       var reason = reachStderr.text.trim()
+      root.busy = false
       if (reason !== "") {
-        // The engine had its own reason (desk not set up, no such id). That
-        // is not "the machine is not answering", so no dialog: show it.
-        watchdog.stop()
-        root.busy = false
+        // The engine had its own reason (desk not set up, no such id). That is
+        // not "the machine is not answering", so no message box: show it.
         root.setStatus(root.statusKey, reason, true)
         return
       }
-      watchdog.stop()
-      root.setStatus(root.statusKey, "", false)
-      root.confirmOpen = true
+      root.clearStatus()
+      root.unreachable = root.pendingComputer
     }
   }
 
@@ -228,18 +225,20 @@ Panel {
       watchdog.stop()
       root.busy = false
       if (exitCode === 0) {
-        root.clearStatus()
+        var wasAll = root.pendingSerial === ""
+        var target = root.labelFor(root.pendingComputer)
+        root.cancelSend()
         root.broadcast("refresh")
-        // The screens are now on another computer, so the person is not
-        // looking at this panel. A notification is the one thing they can see.
-        if (root.pendingSerial === "") {
-          notifyProc.command = ["/usr/bin/notify-send", "Screen Push", "Screens sent to " + root.labelFor(root.pendingComputer) + "."]
+        if (wasAll) {
+          // Every screen is now on another computer, so the person is not
+          // looking at this panel. A notification is the one thing they can see.
+          notifyProc.command = ["/usr/bin/notify-send", "Screen Push", "Screens sent to " + target + "."]
           notifyProc.running = true
+          root.close()
         }
-        root.close()
         return
       }
-      // Refused: nothing moved. Leave the menu up and say why, under the row.
+      // Refused: nothing moved. Leave the panel up and say why.
       root.setStatus(root.statusKey, switchStderr.text.trim(), true)
     }
   }
@@ -254,14 +253,123 @@ Panel {
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
     function refresh(): void { root.broadcast("refresh") }
-    function screens(): void { root.open(); root.submenuSerial = "monitors" }
     function setup(): void { root.openSetup() }
-    function send(id: string): string { root.sendTo(id); return "ok" }
+    function send(id: string): string { root.sendTo(id, ""); return "ok" }
   }
 
-  // One menu line, built like a bluetooth device row: left label with an
-  // icon column, a right-hand slot for a status word, a chevron or a check,
-  // hover fill, stronger fill and a check for the current one.
+  // Every string this panel shows comes from the person's own config or from
+  // the monitor itself, so no Text in here is allowed to interpret markup.
+  component PlainLabel: Text {
+    textFormat: Text.PlainText
+    color: root.ink
+    font.family: root.ff
+    font.pixelSize: Style.font.body
+  }
+
+  // One screen on the desk: a rectangle carrying the name of the computer it
+  // is showing, its stand below it, and its own name under that. Accent border
+  // while it is on this computer, dashed-looking dim while it is not set up.
+  component ScreenBox: Column {
+    id: boxCol
+    property var view: ({})
+    property bool sending: false
+    readonly property bool clickable: root.deskState.known && !root.busy
+    spacing: 0
+
+    Rectangle {
+      id: face
+      width: parent.width
+      implicitHeight: Math.max(Style.space(46), who.implicitHeight + Style.space(26))
+      radius: Style.cornerRadius
+      color: boxCol.view.here ? "transparent" : root.track
+      border.width: 2
+      border.color: boxCol.sending ? root.accent
+                  : boxCol.view.unmapped ? root.urgent
+                  : boxCol.view.here ? root.accent : root.track
+      clip: true
+
+      Rectangle {
+        id: fill
+        visible: boxCol.sending
+        height: parent.height
+        width: 0
+        color: root.accent
+        opacity: 0.25
+        SequentialAnimation on width {
+          running: boxCol.sending
+          loops: Animation.Infinite
+          NumberAnimation { from: 0; to: face.width; duration: 1500; easing.type: Easing.InOutSine }
+          PauseAnimation { duration: 200 }
+        }
+      }
+
+      PlainLabel {
+        id: who
+        anchors.centerIn: parent
+        width: parent.width - Style.space(12)
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+        text: boxCol.view.computerLabel || ""
+        color: boxCol.view.unmapped ? root.urgent : boxCol.view.here ? root.ink : root.dim
+        font.pixelSize: Style.font.subtitle
+        font.bold: true
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: boxCol.clickable ? Qt.PointingHandCursor : Qt.ArrowCursor
+        onClicked: if (boxCol.clickable) root.sendScreen(boxCol.view)
+      }
+    }
+
+    Rectangle { width: Math.round(parent.width * 0.36); height: Style.space(4); color: root.track
+                anchors.horizontalCenter: parent.horizontalCenter }
+    Rectangle { width: Math.round(parent.width * 0.58); height: Style.space(3); radius: height / 2; color: root.track
+                anchors.horizontalCenter: parent.horizontalCenter }
+
+    PlainLabel {
+      width: parent.width
+      topPadding: Style.space(6)
+      horizontalAlignment: Text.AlignHCenter
+      elide: Text.ElideRight
+      text: (boxCol.view.label || "").toUpperCase()
+      color: root.dim
+      font.pixelSize: Style.font.caption
+      font.letterSpacing: 0.8
+    }
+  }
+
+  // One box for everything that has gone wrong: the problem in bold, the next
+  // step, the command to check with, and its own buttons.
+  component MessageBox: Rectangle {
+    id: box
+    property color tone: root.urgent
+    property string title: ""
+    property string next: ""
+    property string command: ""
+    default property alias buttons: buttonRow.data
+    width: parent.width
+    implicitHeight: boxText.implicitHeight + Style.space(20)
+    color: "transparent"
+    radius: Style.cornerRadius
+    border.width: 1
+    border.color: tone
+
+    Column {
+      id: boxText
+      x: Style.space(12); y: Style.space(10); width: parent.width - Style.space(24)
+      spacing: Style.space(4)
+      PlainLabel { width: parent.width; wrapMode: Text.WordWrap; text: box.title; color: box.tone; font.bold: true }
+      PlainLabel { visible: box.next !== ""; width: parent.width; wrapMode: Text.WordWrap; text: box.next }
+      PlainLabel { visible: box.command !== ""; width: parent.width; elide: Text.ElideRight; text: box.command
+                   color: root.dim; font.pixelSize: Style.font.bodySmall }
+      Row { id: buttonRow; spacing: Style.space(8); topPadding: Style.space(4) }
+    }
+  }
+
+  // One computer line, built like a bluetooth device row: left label with an
+  // icon column, a right-hand slot for a status word or a check, hover fill.
   component MenuRow: CursorSurface {
     id: row
     property var model: ({})
@@ -271,7 +379,7 @@ Panel {
     readonly property bool isCurrent: model.current === true
     readonly property bool clickable: root.enabled && !root.busy && !isCurrent
 
-    foreground: root.barForeground
+    foreground: root.ink
     current: isCurrent
     hasCursor: root.cursorActive && root.selectedIndex === index
     implicitHeight: rowContent.implicitHeight + Style.spacing.rowPaddingX
@@ -294,43 +402,32 @@ Panel {
       anchors.rightMargin: Style.space(10)
       implicitHeight: Math.max(rowIcon.implicitHeight, rowLabel.implicitHeight, Style.font.title)
 
-      Text {
-        textFormat: Text.PlainText
+      PlainLabel {
         id: rowIcon
-        visible: row.model.icon !== ""
         text: row.model.icon || ""
         color: row.foreground
-        font.family: root.ff
         font.pixelSize: Style.font.title
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
       }
 
-      Text {
-        textFormat: Text.PlainText
+      PlainLabel {
         id: rowLabel
-        text: row.model.label + (row.isCurrent ? " · here now" : "")
+        text: (row.model.label || "") + (row.isCurrent ? " · here now" : "")
         color: row.foreground
-        font.family: root.ff
-        font.pixelSize: Style.font.body
         elide: Text.ElideRight
-        anchors.left: row.model.icon !== "" ? rowIcon.right : parent.left
-        anchors.leftMargin: row.model.icon !== "" ? Style.space(10) : 0
+        anchors.left: rowIcon.right
+        anchors.leftMargin: Style.space(10)
         anchors.right: rowRight.left
         anchors.rightMargin: Style.space(8)
         anchors.verticalCenter: parent.verticalCenter
       }
 
-      // Right slot: a status word while working, a check for the current
-      // computer, or a chevron for a row that leads somewhere.
-      Text {
-        textFormat: Text.PlainText
+      PlainLabel {
         id: rowRight
         text: row.status !== "" && !row.statusUrgent ? row.status
-            : row.isCurrent ? "\u{f012c}"
-            : (row.model.trailing || "")
+            : row.isCurrent ? "\u{f012c}" : ""
         color: row.status !== "" ? row.foreground : Qt.darker(row.foreground, 1.4)
-        font.family: root.ff
         font.pixelSize: row.status !== "" ? Style.font.caption : Style.font.subtitle
         horizontalAlignment: Text.AlignRight
         width: Math.max(Style.space(22), implicitWidth)
@@ -345,6 +442,12 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: "\u{f04e1}"
+    // State lives in the glyph colour: accent while a switch is running, urgent
+    // when a screen here is not set up, dim while the screens are elsewhere.
+    foreground: root.busy ? root.accent
+              : root.unmappedCount > 0 ? root.urgent
+              : root.allAway ? root.dim
+              : (root.bar ? root.bar.foreground : Color.foreground)
     onPressed: root.toggle()
   }
 
@@ -355,17 +458,20 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(520))
+    contentWidth: panel.fittedContentWidth(Style.space(400))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(560))
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: root.confirmOpen
       onCloseRequested: root.close()
       onMoveRequested: function(dx, dy) { if (dy !== 0) root.moveCursor(dy) }
       onActivateRequested: if (root.cursorActive) root.activate(root.rows[root.selectedIndex])
       onTabRequested: function(direction) { root.switchPanel(direction) }
+      Keys.onPressed: function(event) {
+        if (event.text === ",") { root.openSetup(); event.accepted = true }
+        else if (event.text === "r" || event.text === "R") { root.refresh(); event.accepted = true }
+      }
 
       Column {
         id: column
@@ -373,74 +479,139 @@ Panel {
         anchors.right: parent.right
         spacing: Style.space(14)
 
+        // ---------- hero ----------
         PanelHero {
-          foreground: root.barForeground
+          width: parent.width
+          foreground: root.stateColor
           fontFamily: root.ff
-          title: "Screen Push"
-          meta: root.heroMeta
+          metaOpacity: 1
+          title: Engine.plain(root.heroData.title)
+          meta: Engine.plain(root.heroData.meta).toUpperCase()
           iconComponent: Component {
-            Text {
-              textFormat: Text.PlainText
+            PlainLabel {
               text: "\u{f04e1}"
-              color: root.barForeground
-              font.family: root.ff
+              color: root.stateColor
               font.pixelSize: Style.font.display
             }
           }
           trailingControl: Component {
             PanelActionButton {
               iconText: "\u{f0493}"
-              tooltipText: root.deskState.known ? "Edit this desk" : "Set up this desk"
-              foreground: root.barForeground
+              tooltipText: root.deskState.known ? "Set up this desk" : "Set up this desk"
+              foreground: root.ink
               fontFamily: root.ff
               onClicked: root.openSetup()
             }
           }
         }
+        PlainLabel {
+          visible: root.heroData.detail !== ""
+          width: parent.width
+          topPadding: -Style.space(10)
+          text: Engine.plain(root.heroData.detail)
+          color: root.dim
+          font.pixelSize: Style.font.bodySmall
+          elide: Text.ElideRight
+        }
 
-        PanelSeparator { foreground: root.barForeground }
-
+        // ---------- the desk ----------
         Column {
+          visible: root.deskState.known && root.views.length > 0
           width: parent.width
           spacing: Style.space(10)
-
-          PanelSectionHeader {
-            text: root.sectionTitle
-            foreground: root.barForeground
-            fontFamily: root.ff
-            visible: root.deskState.known
-          }
-
-          // Not set up, or nothing answered: one sentence and the gear above.
-          Text {
-            textFormat: Text.PlainText
-            visible: !root.deskState.known
+          PanelSeparator { foreground: root.ink }
+          PanelSectionHeader { text: "THIS DESK"; foreground: root.ink; fontFamily: root.ff }
+          Row {
+            id: deskRow
             width: parent.width
-            wrapMode: Text.WordWrap
-            text: root.loading ? "Checking screens…"
-                : root.deskState.hint !== "" ? root.deskState.hint
-                : "This desk isn't set up yet. Use the gear above to set it up."
-            color: Qt.darker(root.barForeground, 1.5)
-            font.family: root.ff
-            font.pixelSize: Style.font.bodySmall
+            spacing: Style.space(10)
+            Repeater {
+              model: root.views
+              delegate: ScreenBox {
+                required property var modelData
+                required property int index
+                width: (deskRow.width - Style.space(10) * (root.views.length - 1)) / Math.max(1, root.views.length)
+                view: modelData
+                sending: root.busy && root.pendingSerial === modelData.serial
+              }
+            }
           }
+        }
 
-          // A screen the desk has never seen still shows; a switch just leaves
-          // it where it is. Say so before the click.
-          Text {
-            textFormat: Text.PlainText
-            visible: root.submenuSerial === "" && root.deskState.known && root.deskState.unmapped.length > 0
-            width: parent.width
-            wrapMode: Text.WordWrap
-            text: (root.deskState.unmapped.length === 1
-                   ? "1 screen here isn't set up yet and will stay put."
-                   : root.deskState.unmapped.length + " screens here aren't set up yet and will stay put.")
-                  + " Use the gear above to add it."
-            color: Color.urgent
-            font.family: root.ff
-            font.pixelSize: Style.font.bodySmall
+        // ---------- not set up: three steps ----------
+        Column {
+          visible: !root.deskState.known && !root.loading
+          width: parent.width
+          spacing: Style.space(10)
+          PanelSeparator { foreground: root.ink }
+          PanelSectionHeader { text: "TO SET IT UP"; foreground: root.ink; fontFamily: root.ff }
+          Repeater {
+            model: [
+              { step: "Turn on DDC/CI in each screen's own menu", hint: "Usually under Others or System" },
+              { step: "Open setup and name your computers", hint: "Whatever you call them" },
+              { step: "Pick the input each computer is plugged into", hint: "Try it switches the screen so you can see which is which" }
+            ]
+            delegate: Row {
+              required property var modelData
+              required property int index
+              width: parent.width
+              spacing: Style.space(12)
+              PlainLabel { text: String(index + 1); color: root.dim; font.pixelSize: Style.font.bodySmall }
+              Column {
+                width: parent.width - Style.space(24)
+                spacing: Style.space(2)
+                PlainLabel { width: parent.width; wrapMode: Text.WordWrap; text: modelData.step; font.pixelSize: Style.font.bodySmall }
+                PlainLabel { width: parent.width; wrapMode: Text.WordWrap; text: modelData.hint; color: root.dim; font.pixelSize: Style.font.caption }
+              }
+            }
           }
+        }
 
+        // ---------- a screen that is not set up ----------
+        MessageBox {
+          visible: root.deskState.known && root.unmappedCount > 0 && root.unreachable === ""
+          tone: root.urgent
+          title: root.unmappedCount === 1 ? "One screen here isn't set up, so it will stay put."
+                                          : String(root.unmappedCount) + " screens here aren't set up, so they will stay put."
+          next: "Open setup and pick the input each computer uses. If a screen doesn't appear, turn on DDC/CI in its own menu."
+          command: "ddcutil detect"
+          Ui.Button {
+            text: "Set up this desk"; iconText: "\u{f0493}"
+            foreground: root.ink; bordered: true; fontFamily: root.ff; fontSize: Style.font.caption
+            onClicked: root.openSetup()
+          }
+          Ui.Button {
+            text: "Look again"; iconText: "\u{f0450}"
+            foreground: root.ink; bordered: true; fontFamily: root.ff; fontSize: Style.font.caption
+            onClicked: root.refresh()
+          }
+        }
+
+        // ---------- a computer that did not answer ----------
+        MessageBox {
+          visible: root.unreachable !== ""
+          tone: root.urgent
+          title: root.labelFor(root.unreachable) + " didn't answer."
+          next: "It may be off or asleep. The screens will still switch; you just won't see anything until it wakes."
+          Ui.Button {
+            text: "Send anyway"
+            foreground: root.ink; bordered: true; fontFamily: root.ff; fontSize: Style.font.caption
+            onClicked: { var id = root.unreachable; root.unreachable = ""; root.reallySendTo(id) }
+          }
+          Ui.Button {
+            text: "Cancel"
+            foreground: root.ink; bordered: true; fontFamily: root.ff; fontSize: Style.font.caption
+            onClicked: root.cancelSend()
+          }
+        }
+
+        // ---------- send every screen ----------
+        Column {
+          visible: root.deskState.known && root.rows.length > 0
+          width: parent.width
+          spacing: Style.space(4)
+          PanelSeparator { foreground: root.ink }
+          PanelSectionHeader { text: "SEND ALL SCREENS TO"; foreground: root.ink; fontFamily: root.ff }
           Repeater {
             model: root.rows
             delegate: Column {
@@ -458,44 +629,45 @@ Panel {
               }
 
               // The engine's refusal, under the row that asked for it.
-              Text {
-                textFormat: Text.PlainText
+              PlainLabel {
                 visible: root.statusKey === modelData.key && root.statusUrgent && root.statusText !== ""
                 width: parent.width - Style.space(20)
                 x: Style.space(10)
                 wrapMode: Text.WordWrap
                 text: root.statusText
-                color: Color.urgent
-                font.family: root.ff
+                color: root.urgent
                 font.pixelSize: Style.font.caption
               }
             }
           }
         }
-      }
 
-      // ConfirmDialog has no focus of its own; keys must be routed into
-      // handleKey(). PanelKeyCatcher stands down (blocked) while it is up.
-      Item {
-        id: confirmKeys
-        anchors.fill: parent
-        z: 11
-        visible: root.confirmOpen
-        onVisibleChanged: if (visible) forceActiveFocus(); else keyCatcher.forceActiveFocus()
-        Keys.priority: Keys.BeforeItem
-        Keys.onPressed: function(event) { if (confirm.handleKey(event)) event.accepted = true }
-      }
+        // ---------- actions ----------
+        Row {
+          width: parent.width
+          layoutDirection: Qt.RightToLeft
+          spacing: Style.space(8)
+          Ui.Button {
+            visible: root.deskState.known
+            text: "Refresh"; iconText: "\u{f0450}"
+            foreground: root.ink; bordered: true; fontFamily: root.ff; iconSize: Style.font.icon
+            onClicked: root.refresh()
+          }
+          Ui.Button {
+            text: "Set up this desk"; iconText: "\u{f0493}"
+            foreground: root.ink; bordered: true; fontFamily: root.ff; iconSize: Style.font.icon
+            onClicked: root.openSetup()
+          }
+        }
 
-      ConfirmDialog {
-        id: confirm
-        anchors.fill: parent
-        z: 10
-        opened: root.confirmOpen
-        message: root.labelFor(root.pendingComputer) + " isn't answering. It may be off or asleep. Send the screens anyway?"
-        confirmText: "Send anyway"
-        cancelText: "Cancel"
-        onConfirmed: { root.confirmOpen = false; root.reallySendTo(root.pendingComputer) }
-        onCanceled: { root.confirmOpen = false; root.pendingComputer = ""; root.pendingSerial = ""; root.busy = false; root.clearStatus() }
+        PlainLabel {
+          visible: root.deskState.known
+          width: parent.width
+          elide: Text.ElideRight
+          text: "j/k select · enter send · , set up this desk · esc close"
+          color: root.muted
+          font.pixelSize: Style.font.caption
+        }
       }
     }
   }
