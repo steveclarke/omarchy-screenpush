@@ -123,6 +123,14 @@ Item {
     return c && c.inputs && c.inputs[serial] !== undefined ? c.inputs[serial] : ""
   }
 
+  // A screen's name is the person's own: ddcutil order is not physical order,
+  // so the label is how they tell the screens apart.
+  function setMonitorLabel(monitorIndex, text) {
+    var next = JSON.parse(JSON.stringify(monitors))
+    next[monitorIndex].label = String(text)
+    monitors = next
+  }
+
   function setCell(computerIndex, serial, code) {
     var next = JSON.parse(JSON.stringify(computers))
     next[computerIndex].inputs[serial] = code
@@ -298,7 +306,7 @@ Item {
     open: root.sheetOpen
     centerOnBar: true
     focusTarget: keyCatcher
-    contentWidth: sheet.fittedContentWidth(Style.space(460))
+    contentWidth: sheet.fittedContentWidth(Style.space(520))
     contentHeight: sheet.fittedContentHeight(column.implicitHeight, Style.space(760))
 
     PanelKeyCatcher {
@@ -421,98 +429,127 @@ Item {
 
         PanelSeparator { visible: root.monitors.length > 0; foreground: root.fg }
 
-        // ---------- Screens ----------
+        // ---------- Screens: one grid, screens across, computers down ----------
         Column {
+          id: gridSection
           visible: root.monitors.length > 0
           width: parent.width
           spacing: Style.space(10)
 
-          PanelSectionHeader { text: "SCREENS"; foreground: root.fg; fontFamily: root.ff }
+          readonly property real nameWidth: Math.max(Style.space(90), width * 0.30)
+          readonly property real cellWidth: root.monitors.length > 0
+            ? (width - nameWidth - Style.space(8) * root.monitors.length) / root.monitors.length : 0
+
+          PanelSectionHeader { text: "WHICH INPUT EACH COMPUTER USES"; foreground: root.fg; fontFamily: root.ff }
 
           Text {
             textFormat: Text.PlainText
             width: parent.width
             wrapMode: Text.WordWrap
-            text: "For each screen, pick the input each computer is plugged into. Try it switches the screen right now, and brings it back when pressed again."
+            text: "Pick the input each computer is plugged into. Try it switches the screen now and brings it back when pressed again. Rename a screen to match where it sits on your desk."
             color: Qt.darker(root.fg, 1.5)
             font.family: root.ff
             font.pixelSize: Style.font.bodySmall
           }
 
-          Repeater {
-            model: root.monitors.length
-            delegate: Column {
-              id: screenBlock
-              required property int index
-              readonly property var monitor: root.monitors[index]
-              readonly property bool switchable: monitor && monitor.inputs.length > 0
-              width: parent.width
-              spacing: Style.space(8)
-
-              Column {
+          // Column headings: the screen names, editable.
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+            Item { width: gridSection.nameWidth; height: 1 }
+            Repeater {
+              model: root.monitors.length
+              delegate: Column {
+                required property int index
+                readonly property var monitor: root.monitors[index]
+                width: gridSection.cellWidth
                 spacing: 0
-                Text {
-                  textFormat: Text.PlainText
-                  text: screenBlock.monitor ? screenBlock.monitor.label : ""
-                  color: root.fg
-                  font.family: root.ff
-                  font.pixelSize: Style.font.subtitle
+                TextField {
+                  width: parent.width
+                  verticalPadding: Style.spacing.controlPaddingY
+                  placeholderText: "Screen name"
+                  Component.onCompleted: text = parent.monitor ? parent.monitor.label : ""
+                  onTextEdited: root.setMonitorLabel(index, text)
                 }
                 Text {
                   textFormat: Text.PlainText
-                  text: screenBlock.monitor ? screenBlock.monitor.model : ""
+                  width: parent.width
+                  elide: Text.ElideRight
+                  text: parent.monitor ? parent.monitor.model : ""
                   color: Qt.darker(root.fg, 1.4)
                   font.family: root.ff
                   font.pixelSize: Style.font.caption
                 }
               }
+            }
+          }
+
+          // One row per computer: its name, then one input cell per screen.
+          Repeater {
+            model: root.computers.length
+            delegate: Row {
+              id: computerRow
+              required property int index
+              readonly property var computer: root.computers[index]
+              width: parent.width
+              spacing: Style.space(8)
 
               Text {
                 textFormat: Text.PlainText
-                visible: !screenBlock.switchable
-                width: parent.width
-                wrapMode: Text.WordWrap
-                text: "Can't switch this screen. Turn on DDC/CI in its own menu, then look for screens again."
-                color: Qt.darker(root.fg, 1.4)
+                width: gridSection.nameWidth
+                elide: Text.ElideRight
+                text: computerRow.computer ? computerRow.computer.label : ""
+                color: root.fg
                 font.family: root.ff
-                font.pixelSize: Style.font.bodySmall
+                font.pixelSize: Style.font.body
+                anchors.verticalCenter: parent.verticalCenter
               }
 
               Repeater {
-                model: screenBlock.switchable ? root.computers.length : 0
+                model: root.monitors.length
                 delegate: Row {
                   id: cell
                   required property int index
-                  readonly property var computer: root.computers[index]
-                  readonly property string serial: screenBlock.monitor ? screenBlock.monitor.serial : ""
-                  readonly property string value: root.cellValue(index, serial)
-                  readonly property bool trying: tryController.isTrying(serial, computer ? computer.id : "")
-                  width: parent.width
-                  spacing: Style.space(8)
+                  readonly property var monitor: root.monitors[index]
+                  readonly property string serial: cell.monitor ? cell.monitor.serial : ""
+                  readonly property bool switchable: cell.monitor && cell.monitor.inputs.length > 0
+                  readonly property string value: root.cellValue(computerRow.index, serial)
+                  readonly property bool trying: tryController.isTrying(serial, computerRow.computer ? computerRow.computer.id : "")
+                  width: gridSection.cellWidth
+                  spacing: Style.space(4)
 
                   Dropdown {
-                    width: parent.width - tryBtn.width - Style.space(8)
-                    label: cell.computer ? cell.computer.label : ""
+                    visible: cell.switchable
+                    width: parent.width - tryBtn.width - Style.space(4)
                     foreground: root.fg
                     fontFamily: root.ff
                     options: root.optionsFor(cell.serial)
                     value: cell.value
-                    onChanged: function(v) { root.setCell(cell.index, cell.serial, v) }
+                    onChanged: function(v) { root.setCell(computerRow.index, cell.serial, v) }
                   }
                   PanelActionButton {
                     id: tryBtn
+                    visible: cell.switchable
                     iconText: cell.trying ? "\u{f054c}" : "\u{f040a}"
                     tooltipText: cell.trying ? "Bring it back" : "Try it"
                     foreground: cell.trying ? Color.accent : root.fg
                     fontFamily: root.ff
                     enabled: cell.value !== "" && !tryController.busy
-                    anchors.bottom: parent.bottom
-                    onClicked: tryController.toggle(cell.serial, cell.computer.id, cell.value)
+                    anchors.verticalCenter: parent.verticalCenter
+                    onClicked: tryController.toggle(cell.serial, computerRow.computer.id, cell.value)
+                  }
+                  Text {
+                    textFormat: Text.PlainText
+                    visible: !cell.switchable
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    text: "DDC/CI is off"
+                    color: Color.urgent
+                    font.family: root.ff
+                    font.pixelSize: Style.font.caption
                   }
                 }
               }
-
-              PanelSeparator { visible: screenBlock.index < root.monitors.length - 1; foreground: root.fg }
             }
           }
         }

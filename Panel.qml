@@ -664,7 +664,7 @@ Panel {
           visible: root.deskState.known
           width: parent.width
           elide: Text.ElideRight
-          text: "j/k select · enter send · , set up this desk · esc close"
+          text: "j/k select · enter send · , set up · esc close"
           color: root.muted
           font.pixelSize: Style.font.caption
         }

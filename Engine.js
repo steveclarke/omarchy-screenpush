@@ -112,7 +112,6 @@ function hero(state, views, ctx) {
   var unmapped = 0
   for (var u = 0; u < views.length; u++) if (views[u].unmapped) unmapped++
   var counts = desk + " \u00b7 " + countWord(views.length, "1 screen", "screens")
-              + " \u00b7 " + countWord(state.computers.length, "1 computer", "computers")
   if (unmapped > 0) {
     return { title: unmapped === 1 ? "One screen isn't set up" : String(unmapped) + " screens aren't set up",
              meta: counts, detail: unmapped === 1 ? "It will stay where it is" : "They will stay where they are",
