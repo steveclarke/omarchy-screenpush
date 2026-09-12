@@ -196,18 +196,9 @@ Panel {
     }
   }
 
-  // The bar icon's colour and optional computer name describe the desk even
-  // while the panel is closed. Read at start, on open and after every send.
-  // Each read is DDC traffic to the card, so the background re-read runs only
-  // while the bar shows a name, which is the one thing a screen moved from the
-  // other computer or its own buttons would leave stale.
-  Component.onCompleted: refresh()
-  Timer {
-    interval: 60000
-    running: root.prefs.barText === "computer" && !root.opened && !root.busy
-    repeat: true
-    onTriggered: if (!stateProc.running) root.refresh()
-  }
+  // The desk is read only when the panel opens, on Refresh and after a send.
+  // Every read is DDC traffic to the graphics card, so nothing reads it in the
+  // background; the bar's colour and name show the last read.
 
   // A Process that fails to spawn reports nothing at all. Nothing should sit on
   // "Sending…" forever.
