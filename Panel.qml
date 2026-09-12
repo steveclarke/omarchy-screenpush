@@ -197,13 +197,14 @@ Panel {
   }
 
   // The bar icon's colour and optional computer name describe the desk even
-  // while the panel is closed, and a screen can be moved from the other computer
-  // or its own buttons. Read it at start and then now and again: every minute
-  // while the bar shows a name, every five otherwise.
+  // while the panel is closed. Read at start, on open and after every send.
+  // Each read is DDC traffic to the card, so the background re-read runs only
+  // while the bar shows a name, which is the one thing a screen moved from the
+  // other computer or its own buttons would leave stale.
   Component.onCompleted: refresh()
   Timer {
-    interval: root.prefs.barText === "computer" ? 60000 : 300000
-    running: !root.opened && !root.busy
+    interval: 60000
+    running: root.prefs.barText === "computer" && !root.opened && !root.busy
     repeat: true
     onTriggered: if (!stateProc.running) root.refresh()
   }
