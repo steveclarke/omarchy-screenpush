@@ -104,13 +104,25 @@ require_deps() {
 # Core Functions
 ################################################################################
 
-# `ddcutil detect` output, run at most once per invocation.
+# The screens on this computer, found from the kernel rather than by asking
+# ddcutil to look.
 #
-# cmd_switch used to pay for it twice - desk_key, then present_serials - and
-# detect is not cheap. The cache must be primed by the COMMAND, not lazily by
-# the helpers: present_serials is read through `$(...)` and `< <(...)`, both of
-# which run in a subshell, so an assignment made there is discarded.
-DETECT_CACHE=""
+# `ddcutil detect`, and every `ddcutil --sn`, opens every I2C bus on the
+# machine to find the screens. On an AMD RDNA4 card (RX 9070, Radeon AI PRO
+# R9700) two of those buses belong to the card's own power controller, named
+# "AMDGPU SMU 0" and "AMDGPU SMU 1". Probing them wedges the controller and the
+# card drops off the PCIe bus, which is a hard crash of the whole desktop
+# (ddcutil issues #194 and #629). So the engine never scans. The kernel already
+# knows which connector each screen is on, its EDID (serial and model), and
+# which I2C bus reaches it; every ddcutil call names that one bus with --bus.
+#
+# A screen is present when its connector says "connected" and its EDID carries
+# a serial. A screen off at the wall drops its connection, which matches what
+# `detect` used to report.
+#
+# The roots are overridable so the tests can build a fake tree.
+DRM_ROOT=${SCREENPUSH_DRM_ROOT:-/sys/class/drm}
+I2C_ROOT=${SCREENPUSH_I2C_ROOT:-/sys/bus/i2c/devices}
 
 # A monitor, or anything pretending to be one on the I2C bus, chooses how much
 # it answers with. Cap every read here, at the producer, so neither this script
@@ -118,35 +130,117 @@ DETECT_CACHE=""
 DDC_MAX_BYTES=131072
 ddc() { ddcutil "$@" 2>/dev/null | head -c "$DDC_MAX_BYTES" || true; }
 
-prime_detect() {
-  [ -n "$DETECT_CACHE" ] || DETECT_CACHE=$(ddc detect)
-}
-
-detect_raw() {
-  if [ -n "$DETECT_CACHE" ]; then printf '%s\n' "$DETECT_CACHE"
-  else ddc detect
-  fi
-}
-
-# Serials of every monitor answering DDC right now, one per line.
-#
-# Taking the text after the colon rather than $NF: ddcutil prints the field
-# with an empty value for a panel that reports no serial, and $NF on
-# "   Serial number:" yields the literal string "number:". That string then
-# became part of desk_key, added a phantom row to the setup grid, and made
-# every capabilities lookup for it fail.
-present_serials() {
-  detect_raw | awk '
-    /Serial number:/ {
-      sub(/^[[:space:]]*Serial number:[[:space:]]*/, "")
-      if ($0 != "") print
+# One text descriptor from the base EDID block: tag ff is the serial, fc the
+# model. Bytes after the 5-byte header, up to a newline, printable ASCII only,
+# trailing spaces trimmed - the same text ddcutil printed as "Serial number"
+# and "Model".
+edid_text() {
+  local file="$1" tag="$2"
+  head -c 128 -- "$file" 2>/dev/null | od -An -v -tx1 | awk -v tag="$tag" '
+    { for (i = 1; i <= NF; i++) b[n++] = $i }
+    END {
+      hex = "0123456789abcdef"
+      if (n < 128) exit
+      for (d = 54; d <= 108; d += 18) {
+        if (b[d] != "00" || b[d+1] != "00" || b[d+2] != "00" || b[d+3] != tag) continue
+        out = ""
+        for (i = d + 5; i < d + 18; i++) {
+          if (b[i] == "0a") break
+          c = (index(hex, substr(b[i], 1, 1)) - 1) * 16 + index(hex, substr(b[i], 2, 1)) - 1
+          if (c < 32 || c > 126) { out = ""; break }
+          out = out sprintf("%c", c)
+        }
+        sub(/ +$/, "", out)
+        print out
+        exit
+      }
     }'
 }
 
-# Two monitors reporting the same serial cannot be addressed apart: every
-# `ddcutil --sn` call matches both and ddcutil refuses. Caught here, at the
-# start, rather than as a confusing mid-switch failure with some screens
-# already moved.
+# The I2C bus that carries DDC for one connector. DisplayPort's is the AUX
+# channel, which the kernel exposes as an i2c-N directory inside the connector;
+# HDMI and DVI use the `ddc` link. The AUX bus comes first: on DisplayPort the
+# `ddc` link points at the physical DDC pins, which are not wired.
+#
+# Any bus the kernel names as the card's power controller is refused, whatever
+# path led to it. That is the bus that crashes the card.
+connector_bus() {
+  local dir="$1" bus="" f name
+  for f in "$dir"/i2c-*; do
+    [ -d "$f" ] || continue
+    bus=${f##*/i2c-}; break
+  done
+  if [ -z "$bus" ] && [ -L "$dir/ddc" ]; then
+    f=$(readlink -- "$dir/ddc"); bus=${f##*/i2c-}
+  fi
+  [[ "$bus" =~ ^[0-9]+$ ]] || return 0
+  name=$(head -c 128 -- "$I2C_ROOT/i2c-$bus/name" 2>/dev/null || true)
+  [[ "$name" != *SMU* ]] || return 0
+  printf '%s' "$bus"
+}
+
+# serial<TAB>model<TAB>bus for every connected screen, run at most once per
+# invocation. The cache must be primed by the COMMAND, not lazily by the
+# helpers: present_serials is read through `$(...)` and `< <(...)`, both of
+# which run in a subshell, so an assignment made there is discarded.
+DISPLAYS_CACHE=""
+DISPLAYS_PRIMED=0
+
+scan_displays() {
+  local dir status serial model bus
+  for dir in "$DRM_ROOT"/card*-*; do
+    [ -f "$dir/status" ] || continue
+    status=$(head -c 32 -- "$dir/status" 2>/dev/null || true)
+    [ "$status" = "connected" ] || continue
+    serial=$(edid_text "$dir/edid" ff)
+    [ -n "$serial" ] || continue
+    bus=$(connector_bus "$dir")
+    [ -n "$bus" ] || continue
+    model=$(edid_text "$dir/edid" fc)
+    printf '%s\t%s\t%s\n' "$serial" "$model" "$bus"
+  done
+}
+
+prime_displays() {
+  [ "$DISPLAYS_PRIMED" -eq 1 ] && return 0
+  DISPLAYS_CACHE=$(scan_displays)
+  DISPLAYS_PRIMED=1
+}
+
+displays() {
+  if [ "$DISPLAYS_PRIMED" -eq 1 ]; then
+    [ -z "$DISPLAYS_CACHE" ] || printf '%s\n' "$DISPLAYS_CACHE"
+  else
+    scan_displays
+  fi
+}
+
+# Serials of every connected screen, one per line. A panel whose EDID has no
+# serial is left out: it cannot be told apart from its neighbours, and a blank
+# serial would add a phantom row to the setup grid.
+present_serials() {
+  displays | cut -f1
+}
+
+# The bus for a serial. When two screens report the same serial this is
+# ambiguous, which verify_unique_serials refuses before anything is sent.
+bus_for() {
+  displays | awk -F'\t' -v s="$1" '$1 == s { print $3; exit }'
+}
+
+# ddcutil against one screen's own bus. A screen with no known bus gets no
+# call at all, never a fallback to a lookup by serial, which would scan.
+ddc_screen() {
+  local serial="$1" bus
+  shift
+  bus=$(bus_for "$serial")
+  [ -n "$bus" ] || return 0
+  ddc --bus "$bus" "$@"
+}
+
+# Two monitors reporting the same serial cannot be told apart in the desk
+# file, which keys every input by serial. Caught here, at the start, rather
+# than as a confusing mid-switch failure with some screens already moved.
 verify_unique_serials() {
   local dupes
   dupes=$(present_serials | sort | uniq -d | paste -sd ', ' -)
@@ -154,24 +248,9 @@ verify_unique_serials() {
     || error "Two screens report the same serial number (${dupes}), so Screen Push can't tell them apart."
 }
 
-# serial<TAB>model for every monitor answering DDC right now, one per line.
-# Real ddcutil prints "Model:" before "Serial number:" within a Display
-# block; the test stub prints them the other way around. Blocks are
-# delimited by "Display " lines rather than by field order, so both work,
-# and a block with no Model line still yields its serial with an empty
-# model instead of being dropped.
+# serial<TAB>model for every connected screen, one per line.
 monitor_records() {
-  detect_raw | awk '
-    function flush() { if (serial != "") print serial "\t" model }
-    /^Display / { flush(); serial = ""; model = "" }
-    /Serial number:/ {
-      line = $0
-      sub(/^[[:space:]]*Serial number:[[:space:]]*/, "", line)
-      serial = line
-    }
-    /Model:/ { sub(/^[[:space:]]*Model:[[:space:]]*/, ""); model = $0 }
-    END { flush() }
-  ' || true
+  displays | cut -f1,2
 }
 
 # The input codes a monitor reports it actually has. Sending a code a panel
@@ -191,7 +270,7 @@ monitor_records() {
 # compares 0x-prefixed lowercase, and a parser that emitted "0f" would make
 # every capability check silently fail closed.
 capabilities_for() {
-  ddc --sn "$1" capabilities \
+  ddc_screen "$1" capabilities \
     | awk '
         /^[[:space:]]*Feature:[[:space:]]*60/ { inblock = 1; next }
         /^[[:space:]]*Feature:/               { inblock = 0 }
@@ -201,7 +280,7 @@ capabilities_for() {
 }
 
 cmd_detect() {
-  prime_detect
+  prime_displays
   if [ -z "$(present_serials)" ]; then
     jq -n -c --arg hint "$(no_screens_hint)" '{monitors: [], hint: $hint}'
     return 0
@@ -243,7 +322,7 @@ live_inputs() {
 }
 
 read_input() {
-  ddc --sn "$1" getvcp 60 \
+  ddc_screen "$1" getvcp 60 \
     | grep -o 'sl=0x[0-9a-fA-F]*' | cut -d= -f2 | tr 'A-F' 'a-f' || true
 }
 
@@ -263,7 +342,7 @@ read_input() {
 # filled in has an empty inputs map, and `all` over an empty list is true, so
 # without it every blank computer would match everything.
 cmd_state() {
-  prime_detect
+  prime_displays
 
   local key desk live
   key=$(desk_key)
@@ -384,7 +463,7 @@ cmd_switch() {
   done
   [ -n "$target" ] || error "usage: screenpush switch <computer> [--screen <serial>]"
 
-  prime_detect
+  prime_displays
   verify_unique_serials
 
   local key desk computer
@@ -430,7 +509,7 @@ cmd_switch() {
   verify_codes "${pairs[@]}"
 
   for ((i = 0; i < ${#pairs[@]}; i += 2)); do
-    ddcutil --sn "${pairs[i]}" setvcp 60 "${pairs[i+1]}" \
+    ddcutil --bus "$(bus_for "${pairs[i]}")" setvcp 60 "${pairs[i+1]}" \
       || error "Couldn't switch $(screen_label "${pairs[i]}"). Screens already moved stay moved; use its own menu to bring it back."
   done
 }
@@ -444,12 +523,12 @@ cmd_switch_raw() {
   [ -n "$serial" ] || error "usage: screenpush switch-raw <serial> <code>"
   [ -n "$code" ] || error "usage: screenpush switch-raw <serial> <code>"
 
-  prime_detect
+  prime_displays
   CURRENT_DESK=$(desk_json "$(desk_key)")
   verify_all_present "$serial"
   verify_codes "$serial" "$code"
 
-  ddcutil --sn "$serial" setvcp 60 "$code" \
+  ddcutil --bus "$(bus_for "$serial")" setvcp 60 "$code" \
     || error "Couldn't switch $(screen_label "$serial"). Use its own menu to switch it by hand."
 }
 
@@ -461,7 +540,7 @@ cmd_reachable() {
   local target="${1:-}"
   [ -n "$target" ] || error "usage: screenpush reachable <computer>"
 
-  prime_detect
+  prime_displays
   local desk host
   desk=$(desk_json "$(desk_key)")
   [ "$desk" != "null" ] || error "This desk hasn't been set up yet. Click the icon and choose Set up this desk."

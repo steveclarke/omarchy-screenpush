@@ -1,42 +1,34 @@
 #!/usr/bin/env bash
 # Fake ddcutil for tests. Understands only what the engine calls:
-#   ddcutil detect
-#   ddcutil --sn SERIAL getvcp 60
-#   ddcutil --sn SERIAL setvcp 60 CODE
-#   ddcutil --sn SERIAL capabilities
-# State lives in $STUB_STATE/<serial> (current code) and $STUB_CAPS
-# (lines of "SERIAL code code code"). A serial with no state file is
-# treated as switched off at the wall - absent from `detect` entirely.
-# A state file containing the literal "UNRESPONSIVE" is detected but
-# silent on getvcp/setvcp, which is how a genuine DDC fault is tested -
-# these are different physical situations and the engine must tell them
-# apart.
+#   ddcutil --bus N getvcp 60
+#   ddcutil --bus N setvcp 60 CODE
+#   ddcutil --bus N capabilities
+# `detect` and `--sn` scan every I2C bus, which crashes RDNA4 cards, so they
+# are refused here and logged; the tests assert the log never shows them.
+# Every call is appended to $STUB_LOG.
+#
+# The bus is mapped to a serial through $STUB_BUSMAP, written by
+# test/stub/screenpush. State lives in $STUB_STATE/<serial> (current code) and
+# $STUB_CAPS (lines of "SERIAL code code code"). A state file containing the
+# literal "UNRESPONSIVE" is present but silent on getvcp/setvcp, which is how a
+# genuine DDC fault is tested.
 set -uo pipefail
 
 # Guarded with :- so running this stub outside the test fixture fails with a
 # readable message rather than bash's raw "unbound variable".
 : "${STUB_STATE:?stub: STUB_STATE is not set - run this from the bats fixture}"
 : "${STUB_CAPS:?stub: STUB_CAPS is not set - run this from the bats fixture}"
+: "${STUB_BUSMAP:?stub: STUB_BUSMAP is not set - run the engine through test/stub/screenpush}"
+
+[ -z "${STUB_LOG:-}" ] || echo "$*" >> "$STUB_LOG"
 
 caps_for() { grep "^$1 " "$STUB_CAPS" 2>/dev/null | cut -d' ' -f2- || true; }
-
-if [ "${1:-}" = "detect" ]; then
-  for f in "$STUB_STATE"/*; do
-    [ -e "$f" ] || continue
-    serial=$(basename "$f")
-    printf 'Display %s\n   Serial number: %s\n   Model: STUB MONITOR\n' "$serial" "$serial"
-  done
-  # Raw blocks appended verbatim, for shapes a state file cannot express:
-  # a panel that reports no serial at all, and two panels reporting the same
-  # one. Both are real hardware behaviours and both used to corrupt the desk.
-  [ -z "${STUB_EXTRA_DETECT:-}" ] || [ ! -f "$STUB_EXTRA_DETECT" ] || cat "$STUB_EXTRA_DETECT"
-  exit 0
-fi
 
 serial="" ; shift_to_cmd=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --sn) serial="$2"; shift 2 ;;
+    --bus) serial=$(awk -v b="$2" '$1 == b { print $2; exit }' "$STUB_BUSMAP"); shift 2 ;;
+    --sn|detect) echo "stub: $1 scans every bus and is forbidden" >&2; exit 99 ;;
     *) shift_to_cmd+=("$1"); shift ;;
   esac
 done

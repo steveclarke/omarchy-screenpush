@@ -4,7 +4,8 @@ load fixtures/two-monitors.env
 
 setup() {
   setup_two_monitors
-  ENGINE="$BATS_TEST_DIRNAME/../bin/screenpush"
+  ENGINE="$BATS_TEST_DIRNAME/stub/screenpush"
+  export STUB_LOG="$BATS_TEST_TMPDIR/ddcutil.log"
 }
 
 @test "detect lists both monitors with their valid input codes" {
@@ -337,11 +338,10 @@ JSON
 }
 
 @test "a monitor reporting no serial is ignored, not turned into a phantom" {
-  # ddcutil prints the field with an empty value for panels that report no
-  # serial. Taking $NF off that line yields the literal "number:", which used
-  # to join the desk key, add a row to the setup grid, and fail every lookup.
-  export STUB_EXTRA_DETECT="$BATS_TEST_TMPDIR/extra"
-  printf 'Display 9\n   Serial number:\n   Model: NO SERIAL PANEL\n' > "$STUB_EXTRA_DETECT"
+  # A panel whose EDID has no serial descriptor. A blank serial used to join
+  # the desk key, add a row to the setup grid, and fail every lookup.
+  export STUB_EXTRA_CONNECTORS="$BATS_TEST_TMPDIR/extra"
+  printf '\tNO SERIAL PANEL\n' > "$STUB_EXTRA_CONNECTORS"
 
   run "$ENGINE" state
   [ "$status" -eq 0 ]
@@ -355,8 +355,8 @@ JSON
 
 @test "two monitors reporting the same serial are refused before anything moves" {
   save_office_desk
-  export STUB_EXTRA_DETECT="$BATS_TEST_TMPDIR/extra"
-  printf 'Display 9\n   Serial number: AAA0001\n   Model: CLONE\n' > "$STUB_EXTRA_DETECT"
+  export STUB_EXTRA_CONNECTORS="$BATS_TEST_TMPDIR/extra"
+  printf 'AAA0001\tCLONE\n' > "$STUB_EXTRA_CONNECTORS"
 
   run "$ENGINE" switch mac
   [ "$status" -ne 0 ]
@@ -431,4 +431,40 @@ CAPS
   [ "$status" -eq 0 ]
   echo "$output" | jq -e '.monitors == []'
   echo "$output" | jq -e '.hint | test("No screens answered")'
+}
+
+@test "no command ever asks ddcutil to scan the buses" {
+  # `ddcutil detect` and `ddcutil --sn` open every I2C bus, including the two
+  # an RDNA4 card's power controller owns, and probing those crashes the card.
+  save_office_desk
+  "$ENGINE" detect >/dev/null
+  "$ENGINE" state >/dev/null
+  "$ENGINE" switch mac
+  "$ENGINE" switch-raw AAA0001 0x0f
+  [ -s "$STUB_LOG" ]
+  ! grep -E '(^| )(detect|--sn)( |$)' "$STUB_LOG"
+  ! grep -Ev '^--bus [0-9]+ ' "$STUB_LOG"
+}
+
+@test "a screen reached only through the GPU power controller's bus is never touched" {
+  export STUB_SMU_CONNECTOR=1
+  run "$ENGINE" detect
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.monitors | length == 2'
+  [[ "$output" != *"SMU0001"* ]]
+  ! grep -E '^--bus 0 ' "$STUB_LOG"
+}
+
+@test "a disconnected connector is not a present screen" {
+  run "$ENGINE" state
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"GONE001"* ]]
+}
+
+@test "detect reads the model from the screen's EDID" {
+  export STUB_EXTRA_CONNECTORS="$BATS_TEST_TMPDIR/extra"
+  printf 'CCC0003\tDELL S2721QS\n' > "$STUB_EXTRA_CONNECTORS"
+  run "$ENGINE" detect
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.monitors[] | select(.serial == "CCC0003") | .model == "DELL S2721QS"'
 }
