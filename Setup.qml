@@ -460,6 +460,7 @@ Item {
             Repeater {
               model: root.monitors.length
               delegate: Column {
+                id: headCell
                 required property int index
                 readonly property var monitor: root.monitors[index]
                 width: gridSection.cellWidth
@@ -473,7 +474,7 @@ Item {
                   // moment later and carries the person's own names. A field that
                   // only reads its value once would show the guess and then save it
                   // over the real name.
-                  readonly property string savedLabel: parent.monitor ? parent.monitor.label : ""
+                  readonly property string savedLabel: headCell.monitor ? headCell.monitor.label : ""
                   onSavedLabelChanged: if (!activeFocus && text !== savedLabel) text = savedLabel
                   Component.onCompleted: text = savedLabel
                   onTextEdited: root.setMonitorLabel(index, text)
@@ -482,7 +483,7 @@ Item {
                   textFormat: Text.PlainText
                   width: parent.width
                   elide: Text.ElideRight
-                  text: parent.monitor ? parent.monitor.model : ""
+                  text: headCell.monitor ? headCell.monitor.model : ""
                   color: Qt.darker(root.fg, 1.4)
                   font.family: root.ff
                   font.pixelSize: Style.font.caption
