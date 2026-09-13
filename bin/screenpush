@@ -100,6 +100,7 @@ no_screens_hint() {
 require_deps() {
   command -v ddcutil >/dev/null || error "ddcutil isn't installed. Install it with: sudo pacman -S ddcutil"
   command -v jq >/dev/null || error "jq isn't installed. Install it with: sudo pacman -S jq"
+  [ -x /usr/bin/python3 ] || error "Python isn't installed. Install it with: sudo pacman -S python"
 }
 
 ################################################################################
