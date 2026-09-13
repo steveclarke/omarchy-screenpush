@@ -29,7 +29,9 @@ set -euo pipefail
 #
 ################################################################################
 
-DESKS=${SCREENPUSH_DESKS:-${XDG_CONFIG_HOME:-$HOME/.config}/screenpush/desks.json}
+# Every read and write of desks.json goes through this helper, which works on
+# descriptors checked for ownership and refuses links. See its header.
+DESKFILE="$(dirname "$(readlink -f "$0")")/../lib/deskfile.py"
 
 # shellcheck source=../lib/desk.sh
 source "$(dirname "$(readlink -f "$0")")/../lib/desk.sh"
@@ -433,21 +435,19 @@ verify_codes() {
 
 # Two switches interleaving on the same I2C buses - a hotkey pressed while the
 # menu is mid-switch, or the two per-monitor bar instances both firing - can
-# leave the desk split across computers. Serialised on a lock beside the desk
-# file, in the user's own config directory.
+# leave the desk split across computers. Serialised on an flock of the
+# screenpush config directory, held by the desk file helper for as long as
+# this script, re-run beneath it, takes.
 with_switch_lock() {
-  local dir lock
-  dir=$(dirname "$DESKS")
-  mkdir -p "$dir"
-  lock="${dir}/.switch.lock"
-
-  # No flock is not a reason to refuse to switch; it only means two concurrent
-  # runs are possible, which is the behaviour we had all along.
-  if command -v flock >/dev/null; then
-    exec 9>"$lock"
-    flock 9
+  if [ "${SCREENPUSH_LOCK_HELD:-}" = 1 ]; then
+    "$@"
+    return
   fi
-  "$@"
+  local sub=switch-raw
+  [ "$1" = cmd_switch_raw ] || sub=switch
+  shift
+  exec /usr/bin/python3 -I -S "$DESKFILE" lock \
+    /usr/bin/env SCREENPUSH_LOCK_HELD=1 "$(readlink -f "$0")" "$sub" "$@"
 }
 
 cmd_switch() {
@@ -551,27 +551,21 @@ cmd_reachable() {
   ping -c 1 -W 1 "$host" >/dev/null 2>&1
 }
 
-# Writes through a temp file in the same directory, then renames. A rename
-# within one filesystem is atomic, so a crash or a full disk leaves the old
-# desk file intact instead of a half-written one - and a half-written desk
-# file means no menu and no way back to a working desk.
+# The helper merges this desk in under the directory lock and publishes by
+# rename, so a crash or a full disk leaves the old desk file intact instead of
+# a half-written one - and a half-written desk file means no menu and no way
+# back to a working desk.
 cmd_save_desk() {
-  local incoming key tmp
-  incoming=$(cat)
+  local incoming key
+  incoming=$(head -c 262145)
   printf '%s' "$incoming" | jq -e . >/dev/null 2>&1 \
     || error "Couldn't save: the desk data was unreadable. Try Save again."
 
   key=$(desk_key)
   [ -n "$key" ] || error "$(no_screens_hint) Nothing was saved."
 
-  mkdir -p "$(dirname "$DESKS")"
-  [ -f "$DESKS" ] || echo '{"version":1,"desks":{}}' > "$DESKS"
-
-  tmp=$(mktemp "$(dirname "$DESKS")/.desks.XXXXXX")
-  jq --arg k "$key" --argjson desk "$incoming" \
-    '.version = 1 | .desks[$k] = $desk' "$DESKS" > "$tmp" \
-    || { rm -f "$tmp"; error "Couldn't write the desk file. Check ~/.config/screenpush is writable and try Save again."; }
-  mv "$tmp" "$DESKS"
+  printf '%s' "$incoming" | /usr/bin/python3 -I -S "$DESKFILE" save "$key" \
+    || exit 1
 }
 
 ################################################################################
