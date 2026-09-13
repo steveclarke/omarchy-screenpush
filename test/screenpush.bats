@@ -468,3 +468,55 @@ CAPS
   [ "$status" -eq 0 ]
   echo "$output" | jq -e '.monitors[] | select(.serial == "CCC0003") | .model == "DELL S2721QS"'
 }
+
+@test "a desk file that is a symlink is refused, not followed, on read and on save" {
+  save_office_desk
+  mv "$XDG_CONFIG_HOME/screenpush/desks.json" "$BATS_TEST_TMPDIR/elsewhere.json"
+  echo "must survive" > "$BATS_TEST_TMPDIR/victim"
+  ln -s "$BATS_TEST_TMPDIR/victim" "$XDG_CONFIG_HOME/screenpush/desks.json"
+
+  run "$ENGINE" state
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"won't use its desk file"* ]]
+
+  run bash -c "echo '{\"label\":\"x\",\"monitors\":[],\"computers\":[]}' | '$ENGINE' save-desk"
+  [ "$status" -ne 0 ]
+  [ "$(cat "$BATS_TEST_TMPDIR/victim")" = "must survive" ]
+  [ -L "$XDG_CONFIG_HOME/screenpush/desks.json" ]
+}
+
+@test "a screenpush config directory that is a symlink is refused" {
+  mkdir -p "$BATS_TEST_TMPDIR/planted"
+  rm -rf "$XDG_CONFIG_HOME/screenpush"
+  ln -s "$BATS_TEST_TMPDIR/planted" "$XDG_CONFIG_HOME/screenpush"
+  run bash -c "echo '{\"label\":\"x\",\"monitors\":[],\"computers\":[]}' | '$ENGINE' save-desk"
+  [ "$status" -ne 0 ]
+  [ -z "$(ls -A "$BATS_TEST_TMPDIR/planted")" ]
+  run "$ENGINE" switch mac
+  [ "$status" -ne 0 ]
+}
+
+@test "a desk file others can write is refused" {
+  save_office_desk
+  chmod 666 "$XDG_CONFIG_HOME/screenpush/desks.json"
+  run "$ENGINE" switch mac
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"won't use its desk file"* ]]
+  [ "$(cat "$STUB_STATE/AAA0001")" = "0x0f" ]
+}
+
+@test "a hard-linked desk file is refused" {
+  save_office_desk
+  ln "$XDG_CONFIG_HOME/screenpush/desks.json" "$BATS_TEST_TMPDIR/second-link"
+  run "$ENGINE" state
+  [ "$status" -ne 0 ]
+}
+
+@test "save-desk publishes an owner-only file in an owner-only directory" {
+  chmod 755 "$XDG_CONFIG_HOME/screenpush"
+  echo '{"label":"x","monitors":[],"computers":[]}' | "$ENGINE" save-desk
+  [ "$(stat -c %a "$XDG_CONFIG_HOME/screenpush/desks.json")" = 600 ]
+  [ "$(stat -c %a "$XDG_CONFIG_HOME/screenpush")" = 700 ]
+  [ -z "$(find "$XDG_CONFIG_HOME/screenpush" -name '.desks.json.*')" ]
+  jq -e '.desks["AAA0001+BBB0002"].label == "x"' "$XDG_CONFIG_HOME/screenpush/desks.json"
+}

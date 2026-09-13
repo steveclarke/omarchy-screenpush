@@ -89,6 +89,11 @@ opens every bus on the machine, and on AMD RDNA4 cards (RX 9070, Radeon AI PRO
 R9700) two of those belong to the card's power controller; probing them
 crashes the card. Screen Push never opens a bus the kernel names `AMDGPU SMU`.
 
+The desk file is read and written only by `lib/deskfile.py`, through
+descriptors checked for ownership. It refuses a `desks.json` or
+`screenpush` directory that is a symlink, a hard link, or writable by
+anyone else, and saves by renaming a fresh owner-only file into place.
+
 ## Development
 
     bats test/screenpush.bats      # engine tests, against a fake ddcutil

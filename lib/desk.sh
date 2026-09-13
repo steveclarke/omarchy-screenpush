@@ -32,8 +32,12 @@ desk_key() {
 # the desk itself - its computers, its labels - is not lost just because the
 # hardware in front of it changed shape.
 desk_json() {
-  [ -f "$DESKS" ] || { echo "null"; return 0; }
-  jq -c --arg k "$1" '
+  local raw
+  # A refused desk file stops the command with the helper's own message,
+  # rather than looking like a desk that was never set up.
+  raw=$(/usr/bin/python3 -I -S "$DESKFILE" read) || exit 1
+  [ -n "$raw" ] || { echo "null"; return 0; }
+  printf '%s' "$raw" | jq -c --arg k "$1" '
     ($k | split("+") | map(select(length > 0))) as $present
     | if ($present | length) == 0 then null
       elif (.desks[$k] // null) != null then .desks[$k]
@@ -47,5 +51,5 @@ desk_json() {
                 desk: .value } ]
           | sort_by([-.common, .extras]) | first ) as $match
         | if $match == null then null else $match.desk end
-      end' "$DESKS" 2>/dev/null || echo "null"
+      end' 2>/dev/null || echo "null"
 }
