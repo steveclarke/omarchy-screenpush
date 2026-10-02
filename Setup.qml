@@ -451,6 +451,7 @@ Item {
                   width: parent.width - removeBtn.width - Style.space(6)
                   verticalPadding: Style.spacing.controlPaddingY
                   placeholderText: "Name"
+                  maximumLength: 64
                   Component.onCompleted: text = root.computers[index].label
                   onTextEdited: root.setLabel(index, text)
                 }
@@ -469,6 +470,7 @@ Item {
                 width: parent.width
                 verticalPadding: Style.spacing.controlPaddingY
                 placeholderText: "Hostname or IP, optional - pinged before sending"
+                maximumLength: 253
                 Component.onCompleted: text = root.computers[index].host || ""
                 onTextEdited: root.setHost(index, text)
               }
@@ -529,6 +531,7 @@ Item {
                   width: parent.width
                   verticalPadding: Style.spacing.controlPaddingY
                   placeholderText: "Screen name"
+                  maximumLength: 64
                   // Detect names the screens by position; the saved desk arrives a
                   // moment later and carries the person's own names. A field that
                   // only reads its value once would show the guess and then save it
