@@ -4,10 +4,10 @@
 Every step works through descriptors opened once and checked on the
 descriptor itself, never by reopening a pathname:
 
-  - The config base is opened as the trust anchor: $XDG_CONFIG_HOME when it is
-    an absolute path, otherwise the passwd home's .config. The anchor may be a
-    symlink (people link their config directory), but it must be a directory
-    owned by this user.
+  - The passwd home is the trust root. The default .config or each component
+    of an absolute $XDG_CONFIG_HOME beneath that home is opened relative to
+    the preceding directory with O_NOFOLLOW and checked for ownership. Only
+    a missing default .config is created; no symlink in the walk is followed.
   - The screenpush directory beneath it is opened O_NOFOLLOW, must be owned by
     this user, and is kept at 0700.
   - desks.json is opened O_NOFOLLOW|O_NONBLOCK and must be a regular file owned
@@ -45,30 +45,53 @@ class Refused(Exception):
     pass
 
 
-def open_anchor():
-    home = pwd.getpwuid(UID).pw_dir
-    base = os.environ.get("XDG_CONFIG_HOME", "")
-    if not os.path.isabs(base):
-        base = os.path.join(home, ".config")
+def open_anchor(chain_out=None):
     try:
-        fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-    except FileNotFoundError:
-        # Only the default ~/.config is created, and then through the passwd
-        # home's descriptor. A missing custom base is refused.
-        if base != os.path.join(home, ".config"):
-            raise Refused(f"{base} does not exist") from None
-        hfd = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-        try:
-            return open_child_dir(hfd, ".config", create=True)
-        finally:
-            os.close(hfd)
+        home = pwd.getpwuid(UID).pw_dir
+    except (KeyError, OSError):
+        raise Refused("the passwd home is unavailable") from None
+    if not os.path.isabs(home):
+        raise Refused("the passwd home is not absolute")
+    base = os.environ.get("XDG_CONFIG_HOME", "")
+    if os.path.isabs(base):
+        prefix = home.rstrip("/")
+        if not base.startswith(prefix + "/"):
+            raise Refused(f"{base} is outside the passwd home")
+        components = base[len(prefix) + 1:].split("/")
+        if any(part in ("", ".", "..") for part in components):
+            raise Refused(f"{base} has an unsafe component")
+        default = False
+    else:
+        components = [".config"]
+        default = True
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    try:
+        fd = os.open(home, flags)
     except OSError:
-        raise Refused(f"{base} is not a directory") from None
-    st = os.fstat(fd)
-    if not stat.S_ISDIR(st.st_mode) or st.st_uid != UID:
+        raise Refused(f"{home} is not a plain directory") from None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != UID:
+            raise Refused(f"{home} is not a directory you own")
+        if chain_out is not None:
+            chain_out.append((st.st_dev, st.st_ino))
+        for part in components:
+            try:
+                child = open_child_dir(fd, part, create=default)
+            except FileNotFoundError:
+                raise Refused(f"{base} does not exist") from None
+            os.close(fd)
+            fd = child
+            if chain_out is not None:
+                st = os.fstat(fd)
+                chain_out.append((st.st_dev, st.st_ino))
+        return fd
+    except OSError:
         os.close(fd)
-        raise Refused(f"{base} is not a directory you own")
-    return fd
+        raise Refused("the config path could not be checked") from None
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def open_child_dir(parent, name, create):
@@ -82,6 +105,8 @@ def open_child_dir(parent, name, create):
             os.mkdir(name, 0o700, dir_fd=parent)
         except FileExistsError:
             pass
+        except OSError:
+            raise Refused(f"{name} could not be created") from None
         try:
             fd = os.open(name, flags, dir_fd=parent)
         except OSError:
@@ -89,15 +114,19 @@ def open_child_dir(parent, name, create):
     except OSError:
         # ELOOP or ENOTDIR: a symlink or something that is not a directory.
         raise Refused(f"{name} is not a plain directory") from None
-    st = os.fstat(fd)
+    try:
+        st = os.fstat(fd)
+    except OSError:
+        os.close(fd)
+        raise Refused(f"{name} could not be checked") from None
     if not stat.S_ISDIR(st.st_mode) or st.st_uid != UID:
         os.close(fd)
         raise Refused(f"{name} is not a directory you own")
     return fd
 
 
-def open_desk_dir(create):
-    anchor = open_anchor()
+def open_desk_dir(create, chain_out=None):
+    anchor = open_anchor(chain_out)
     try:
         try:
             fd = open_child_dir(anchor, "screenpush", create)
@@ -157,16 +186,17 @@ def write_desks(dirfd, data):
         os.close(fd)
 
 
-def revalidate(dirfd):
-    """The directory the file was published into is still the one on the path."""
+def revalidate(dirfd, chain):
+    """The home, config path, and desk directory still name the held inodes."""
     held = os.fstat(dirfd)
-    again = open_desk_dir(create=False)
+    current_chain = []
+    again = open_desk_dir(create=False, chain_out=current_chain)
     if again is None:
         raise Refused("the screenpush directory moved during the save")
     try:
         now = os.fstat(again)
-        if (now.st_dev, now.st_ino) != (held.st_dev, held.st_ino):
-            raise Refused("the screenpush directory was replaced during the save")
+        if current_chain != chain or (now.st_dev, now.st_ino) != (held.st_dev, held.st_ino):
+            raise Refused("the desk file path was replaced during the save")
     finally:
         os.close(again)
 
@@ -200,7 +230,8 @@ def cmd_save(key):
     if not isinstance(desk, dict):
         raise Refused("the desk data was unreadable")
 
-    dirfd = open_desk_dir(create=True)
+    chain = []
+    dirfd = open_desk_dir(create=True, chain_out=chain)
     try:
         fcntl.flock(dirfd, fcntl.LOCK_EX)
         current = read_desks(dirfd)
@@ -218,7 +249,7 @@ def cmd_save(key):
         if len(out) > MAX_BYTES:
             raise Refused("desk file would be too large")
         write_desks(dirfd, out)
-        revalidate(dirfd)
+        revalidate(dirfd, chain)
     finally:
         os.close(dirfd)
     return 0

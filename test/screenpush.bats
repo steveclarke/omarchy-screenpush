@@ -272,6 +272,13 @@ JSON
   echo '{"label":"Office","monitors":[],"computers":[]}' | "$ENGINE" save-desk
   run jq -e '.desks["AAA0001+BBB0002"].label == "Office"' "$XDG_CONFIG_HOME/screenpush/desks.json"
   [ "$status" -eq 0 ]
+
+  unset XDG_CONFIG_HOME
+  echo '{"label":"Default","monitors":[],"computers":[]}' | "$ENGINE" save-desk
+  [ "$(stat -c %a "$SCREENPUSH_TEST_HOME/.config")" = 700 ]
+  run "$ENGINE" state
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.known == true and .label == "Default"'
 }
 
 @test "save-desk leaves other desks alone" {
@@ -494,6 +501,50 @@ CAPS
   [ -z "$(ls -A "$BATS_TEST_TMPDIR/planted")" ]
   run "$ENGINE" switch mac
   [ "$status" -ne 0 ]
+}
+
+@test "a symlinked default .config is refused on read and save" {
+  unset XDG_CONFIG_HOME
+  mkdir -p "$SCREENPUSH_TEST_HOME/real-config"
+  ln -s "$SCREENPUSH_TEST_HOME/real-config" "$SCREENPUSH_TEST_HOME/.config"
+
+  run "$ENGINE" state
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"won't use its desk file"* ]]
+
+  run bash -c "echo '{\"label\":\"x\",\"monitors\":[],\"computers\":[]}' | '$ENGINE' save-desk"
+  [ "$status" -ne 0 ]
+  [ -z "$(ls -A "$SCREENPUSH_TEST_HOME/real-config")" ]
+}
+
+@test "a custom XDG base with a symlinked ancestor is refused" {
+  mkdir -p "$SCREENPUSH_TEST_HOME/real/config/screenpush"
+  ln -s "$SCREENPUSH_TEST_HOME/real" "$SCREENPUSH_TEST_HOME/link"
+  export XDG_CONFIG_HOME="$SCREENPUSH_TEST_HOME/link/config"
+
+  run "$ENGINE" state
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"won't use its desk file"* ]]
+}
+
+@test "a custom XDG base outside the passwd home is refused" {
+  export XDG_CONFIG_HOME="$BATS_TEST_TMPDIR/outside/config"
+  mkdir -p "$XDG_CONFIG_HOME/screenpush"
+
+  run "$ENGINE" state
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"won't use its desk file"* ]]
+}
+
+@test "a custom XDG base with empty or dot components is refused" {
+  for path in "$SCREENPUSH_TEST_HOME//config" \
+              "$SCREENPUSH_TEST_HOME/./config" \
+              "$SCREENPUSH_TEST_HOME/config/../config"; do
+    export XDG_CONFIG_HOME="$path"
+    run "$ENGINE" state
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"won't use its desk file"* ]]
+  done
 }
 
 @test "a desk file others can write is refused" {

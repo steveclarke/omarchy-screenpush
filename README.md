@@ -90,9 +90,14 @@ R9700) two of those belong to the card's power controller; probing them
 crashes the card. Screen Push never opens a bus the kernel names `AMDGPU SMU`.
 
 The desk file is read and written only by `lib/deskfile.py`, through
-descriptors checked for ownership. It refuses a `desks.json` or
-`screenpush` directory that is a symlink, a hard link, or writable by
-anyone else, and saves by renaming a fresh owner-only file into place.
+descriptors checked for ownership. Starting at the passwd home, it walks
+`.config` or an absolute `XDG_CONFIG_HOME` beneath that home one directory at
+a time and refuses symlinks or directories owned by someone else. It creates
+only a missing default `.config`; a missing custom config directory is refused.
+It also refuses a symlinked or hard-linked `desks.json`, or one writable by
+others, and saves by renaming a fresh owner-only file into place. After a
+save, it checks that the home, config path, and `screenpush` directory still
+resolve to the same directories.
 
 ## Development
 

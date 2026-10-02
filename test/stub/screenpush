@@ -73,4 +73,11 @@ mkdir -p "$drm/card0-HDMI-A-1"
 echo disconnected > "$drm/card0-HDMI-A-1/status"
 edid "GONE001" "UNPLUGGED" > "$drm/card0-HDMI-A-1/edid"
 
-exec "$(dirname "$(readlink -f "$0")")/../../bin/screenpush" "$@"
+# Run a copy so its relative deskfile path names the test-only wrapper.
+plugin="$(dirname "$(readlink -f "$0")")/../.."
+mkdir -p "$BATS_TEST_TMPDIR/plugin/bin" "$BATS_TEST_TMPDIR/plugin/lib"
+cp "$plugin/bin/screenpush" "$BATS_TEST_TMPDIR/plugin/bin/screenpush"
+ln -sfn "$plugin/lib/desk.sh" "$BATS_TEST_TMPDIR/plugin/lib/desk.sh"
+ln -sfn "$plugin/test/stub/deskfile.py" "$BATS_TEST_TMPDIR/plugin/lib/deskfile.py"
+export SCREENPUSH_REAL_DESKFILE="$plugin/lib/deskfile.py"
+exec "$BATS_TEST_TMPDIR/plugin/bin/screenpush" "$@"
