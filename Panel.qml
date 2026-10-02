@@ -166,7 +166,7 @@ Panel {
     for (var i = 0; i < deskState.computers.length; i++) {
       var c = deskState.computers[i]
       var mine = true
-      for (var v = 0; v < views.length; v++) if (views[v].computerId !== String(c.id)) mine = false
+      for (var v = 0; v < views.length; v++) if (!views[v].unmapped && views[v].computerId !== String(c.id)) mine = false
       out.push({ key: rowKey(c.id, ""), id: String(c.id), label: Engine.plain(c.label),
                  icon: "\u{f0379}", current: mine && views.length > 0 })
     }
@@ -276,7 +276,12 @@ Panel {
     function toggle(): void { root.toggle() }
     function refresh(): void { root.broadcast("refresh") }
     function setup(): void { root.openSetup() }
-    function send(id: string): string { root.sendTo(id, ""); return "ok" }
+    function send(id: string): string {
+      var known = root.deskState.computers.some(function (c) { return c.id === id })
+      if (!known) return "unknown"
+      root.sendTo(id, "")
+      return "ok"
+    }
   }
 
   // Every string this panel shows comes from the person's own config or from

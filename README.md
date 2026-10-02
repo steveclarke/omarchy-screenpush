@@ -4,8 +4,9 @@ Push every screen on your desk to another computer in one click.
 
 If your screens are cabled to more than one computer, switching between them
 means pressing buttons on each screen's own menu, one screen at a time.
-Screen Push puts a menu in the Omarchy bar that lists your computers. Pick one
-and every screen on the desk switches to it, over DDC/CI. Press a key on the
+Screen Push puts a panel in the Omarchy bar with a picture of your desk and a
+list of your computers. Pick a computer and every screen on the desk switches
+to it, over DDC/CI. Press a key on the
 other computer and they come back.
 
 It pushes rather than pulls: you tell the computer you are *leaving* where to
@@ -44,11 +45,30 @@ switched off at the wall does not lose the desk.
 ## Use
 
 Click the icon and pick a computer. Every screen on the desk goes there. To
-send a single screen, use **Send one screen**.
+send a single screen, click it in the desk picture; it goes to the next
+computer in the desk's order, so on a two-computer desk each click is a
+there-and-back toggle. A screen plugged in that the desk has not been set up
+for shows as **New screen**, stays put on every send, and opens setup when
+clicked.
 
 If the computer you are sending to has a hostname recorded, it is pinged
-first, and you are asked before the screens go to a computer that is not
-answering.
+first. With **Ask before sending to a computer that isn't answering** on (the
+default), you are asked before the screens go to a computer that does not
+answer; with it off, they are sent straight away.
+
+### Settings
+
+Desk setup has three settings:
+
+- **Bar shows** - the icon only (default), or the icon and the name of the
+  computer the screens are on.
+- **Notify after switching** - on by default. A desktop notification, through
+  `notify-send`, when every screen moves to another computer.
+- **Ask before sending to a computer that isn't answering** - on by default.
+
+They are saved, when **Save** is pressed, in this widget's entry in
+`~/.config/omarchy/shell.json`, through the shell's own settings call. The
+same three can be changed with `omarchy bar set`.
 
 ### Hotkeys
 
@@ -62,10 +82,9 @@ Any computer id from desk setup works in place of `this`. On a Mac or
 Windows computer, any tool that can send DDC/CI input codes will do the same
 job for the return trip.
 
-To open the menu, the single-screen picker, or desk setup from a key:
+To open the panel or desk setup from a key:
 
     omarchy-shell shell toggle io.github.steveclarke.screenpush
-    omarchy-shell screenpush screens
     omarchy-shell screenpush setup
 
 ## Remove
@@ -73,7 +92,9 @@ To open the menu, the single-screen picker, or desk setup from a key:
     omarchy plugin remove io.github.steveclarke.screenpush
 
 Your desk file stays in `~/.config/screenpush/`; delete it if you want a
-clean slate.
+clean slate. The bar settings sit in `~/.config/omarchy/shell.json` with the
+rest of the bar's layout, which Omarchy manages; Screen Push writes nothing
+else.
 
 ## How it works
 

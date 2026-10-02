@@ -16,20 +16,51 @@ function plain(value) {
     .slice(0, 120)
 }
 
+// A desk has a handful of screens and computers; anything past this is not a
+// desk, and the whole state is refused rather than cut down to size.
+var MAX_ITEMS = 16
+
+function isRecord(v) { return v !== null && typeof v === "object" && !Array.isArray(v) }
+
+// Serials and input codes are keys chosen by monitor firmware, so lookups go
+// through a map with no prototype: "__proto__" is just another serial.
+function stringMap(v) {
+  var out = Object.create(null)
+  if (!isRecord(v)) return out
+  var keys = Object.keys(v)
+  if (keys.length > MAX_ITEMS) throw new Error("too many entries")
+  for (var i = 0; i < keys.length; i++) if (typeof v[keys[i]] === "string") out[keys[i]] = v[keys[i]]
+  return out
+}
+
+function boundedList(v) {
+  if (!Array.isArray(v)) return []
+  if (v.length > MAX_ITEMS) throw new Error("too many entries")
+  return v
+}
+
 function parseState(text) {
-  var empty = { deskKey: "", label: "", known: false, computers: [], current: null, monitors: [], unmapped: [], live: {}, hint: "" }
+  var empty = { deskKey: "", label: "", known: false, computers: [], current: null, monitors: [], unmapped: [], live: Object.create(null), hint: "" }
   if (!text) return empty
   try {
     var parsed = JSON.parse(text)
+    if (!isRecord(parsed)) return empty
+    var computers = boundedList(parsed.computers)
+      .filter(function (c) { return isRecord(c) && typeof c.id === "string" })
+      .map(function (c) { return { id: c.id, label: c.label, host: c.host, inputs: stringMap(c.inputs) } })
+    var monitors = boundedList(parsed.monitors)
+      .filter(function (m) { return isRecord(m) && typeof m.serial === "string" })
+      .map(function (m) { return { serial: m.serial, label: m.label } })
+    var unmapped = boundedList(parsed.unmapped).filter(function (s) { return typeof s === "string" })
     return {
       deskKey: String(parsed.deskKey || ""),
       label: plain(parsed.label || ""),
       known: parsed.known === true,
-      computers: Array.isArray(parsed.computers) ? parsed.computers : [],
-      current: parsed.current === null ? null : String(parsed.current),
-      monitors: Array.isArray(parsed.monitors) ? parsed.monitors : [],
-      unmapped: Array.isArray(parsed.unmapped) ? parsed.unmapped : [],
-      live: (parsed.live && typeof parsed.live === "object") ? parsed.live : {},
+      computers: computers,
+      current: parsed.current === null || parsed.current === undefined ? null : String(parsed.current),
+      monitors: monitors,
+      unmapped: unmapped,
+      live: stringMap(parsed.live),
       hint: String(parsed.hint || "")
     }
   } catch (e) {
@@ -51,15 +82,27 @@ function screenViews(state) {
       var inputs = state.computers[j].inputs || {}
       if (live !== "" && inputs[m.serial] === live) { who = state.computers[j]; break }
     }
-    var unmapped = state.unmapped.indexOf(m.serial) !== -1
     out.push({
       serial: m.serial,
       label: plain(m.label),
       computerId: who ? String(who.id) : "",
-      computerLabel: who ? plain(who.label) : (unmapped ? "Not set up" : "Another input"),
+      computerLabel: who ? plain(who.label) : "Another input",
       here: who ? who.id === "this" : false,
       known: who !== null,
-      unmapped: unmapped
+      unmapped: false
+    })
+  }
+  // Screens plugged in now that the saved desk has never seen. They stay put
+  // on every send, and a click on one opens setup.
+  for (var u = 0; u < state.unmapped.length; u++) {
+    out.push({
+      serial: state.unmapped[u],
+      label: "New screen",
+      computerId: "",
+      computerLabel: "Not set up",
+      here: false,
+      known: false,
+      unmapped: true
     })
   }
   return out
@@ -145,8 +188,9 @@ function prefs(settings) {
 // The text beside the bar icon when the bar shows the computer: its name while
 // every screen is on one computer, "Split" otherwise, nothing before setup.
 function barLabel(state, views) {
-  if (!state.known || views.length === 0) return ""
-  var first = views[0].computerId
-  for (var i = 0; i < views.length; i++) if (views[i].computerId !== first || first === "") return "Split"
+  var mapped = views.filter(function (v) { return !v.unmapped })
+  if (!state.known || mapped.length === 0) return ""
+  var first = mapped[0].computerId
+  for (var i = 0; i < mapped.length; i++) if (mapped[i].computerId !== first || first === "") return "Split"
   return labelOf(state, first)
 }
