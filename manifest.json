@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.steveclarke.screenpush",
   "name": "Screen Push",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Steve Clarke",
   "license": "MIT",
   "description": "Send every screen on your desk to another computer in one click.",
