@@ -32,16 +32,24 @@
       },
       {
         "key": "notifyAfterSwitch",
-        "type": "boolean",
+        "type": "enum",
+        "options": [
+          "true",
+          "false"
+        ],
         "label": "Notify after switching",
-        "defaultValue": true,
+        "defaultValue": "true",
         "description": "A notification when every screen moves to another computer."
       },
       {
         "key": "askWhenUnreachable",
-        "type": "boolean",
+        "type": "enum",
+        "options": [
+          "true",
+          "false"
+        ],
         "label": "Ask before sending to a computer that isn't answering",
-        "defaultValue": true,
+        "defaultValue": "true",
         "description": "Off sends straight away."
       }
     ]

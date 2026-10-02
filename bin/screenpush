@@ -549,7 +549,7 @@ cmd_reachable() {
   host=$(printf '%s' "$desk" | jq -r --arg id "$target" '[.computers[] | select(.id == $id)][0].host // ""')
   [ -n "$host" ] || return 0
 
-  ping -c 1 -W 1 "$host" >/dev/null 2>&1
+  /usr/bin/ping -c 1 -W 1 -- "$host" >/dev/null 2>&1
 }
 
 # The helper merges this desk in under the directory lock and publishes by

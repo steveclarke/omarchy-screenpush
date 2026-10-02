@@ -16,55 +16,99 @@ function plain(value) {
     .slice(0, 120)
 }
 
-// A desk has a handful of screens and computers; anything past this is not a
-// desk, and the whole state is refused rather than cut down to size.
+// A desk has a handful of screens and computers; anything past these limits
+// is not a desk, and the whole document is refused rather than cut to size.
 var MAX_ITEMS = 16
+var MAX_INPUTS = 32
+var MAX_ID = 64
+var MAX_LABEL = 64
+var MAX_HOST = 253
+var MAX_CODE = 16
+var MAX_HINT = 500
+var MAX_DESK_KEY = 4096
 
 function isRecord(v) { return v !== null && typeof v === "object" && !Array.isArray(v) }
 
-// Serials and input codes are keys chosen by monitor firmware, so lookups go
-// through a map with no prototype: "__proto__" is just another serial.
-function stringMap(v) {
-  var out = Object.create(null)
-  if (!isRecord(v)) return out
-  var keys = Object.keys(v)
-  if (keys.length > MAX_ITEMS) throw new Error("too many entries")
-  for (var i = 0; i < keys.length; i++) if (typeof v[keys[i]] === "string") out[keys[i]] = v[keys[i]]
-  return out
-}
+function refuse(why) { throw new Error(why) }
 
-function boundedList(v) {
-  if (!Array.isArray(v)) return []
-  if (v.length > MAX_ITEMS) throw new Error("too many entries")
+// A required string no longer than max.
+function str(v, max) {
+  if (typeof v !== "string" || v.length > max) refuse("bad string")
   return v
 }
 
+// An optional string: absent or null reads as "".
+function optStr(v, max) { return v === undefined || v === null ? "" : str(v, max) }
+
+function list(v, max) {
+  if (v === undefined || v === null) return []
+  if (!Array.isArray(v) || v.length > max) refuse("bad list")
+  return v
+}
+
+// Serials and input codes are keys chosen by monitor firmware, so lookups go
+// through a map with no prototype: "__proto__" is just another serial.
+function codeMap(v) {
+  var out = Object.create(null)
+  if (v === undefined || v === null) return out
+  if (!isRecord(v)) refuse("bad map")
+  var keys = Object.keys(v)
+  if (keys.length > MAX_ITEMS) refuse("bad map")
+  for (var i = 0; i < keys.length; i++) out[str(keys[i], MAX_ID)] = str(v[keys[i]], MAX_CODE)
+  return out
+}
+
+function emptyState(hint) {
+  return { deskKey: "", label: "", known: false, computers: [], current: null, monitors: [],
+           unmapped: [], live: Object.create(null), hint: hint || "" }
+}
+
 function parseState(text) {
-  var empty = { deskKey: "", label: "", known: false, computers: [], current: null, monitors: [], unmapped: [], live: Object.create(null), hint: "" }
-  if (!text) return empty
+  if (!text) return emptyState("")
   try {
     var parsed = JSON.parse(text)
-    if (!isRecord(parsed)) return empty
-    var computers = boundedList(parsed.computers)
-      .filter(function (c) { return isRecord(c) && typeof c.id === "string" })
-      .map(function (c) { return { id: c.id, label: c.label, host: c.host, inputs: stringMap(c.inputs) } })
-    var monitors = boundedList(parsed.monitors)
-      .filter(function (m) { return isRecord(m) && typeof m.serial === "string" })
-      .map(function (m) { return { serial: m.serial, label: m.label } })
-    var unmapped = boundedList(parsed.unmapped).filter(function (s) { return typeof s === "string" })
+    if (!isRecord(parsed)) refuse("not an object")
+    var computers = list(parsed.computers, MAX_ITEMS).map(function (c) {
+      if (!isRecord(c)) refuse("bad computer")
+      var host = optStr(c.host, MAX_HOST)
+      return { id: str(c.id, MAX_ID), label: optStr(c.label, MAX_LABEL),
+               host: host === "" ? null : host, inputs: codeMap(c.inputs) }
+    })
+    var monitors = list(parsed.monitors, MAX_ITEMS).map(function (m) {
+      if (!isRecord(m)) refuse("bad monitor")
+      return { serial: str(m.serial, MAX_ID), label: optStr(m.label, MAX_LABEL) }
+    })
+    var unmapped = list(parsed.unmapped, MAX_ITEMS).map(function (s) { return str(s, MAX_ID) })
     return {
-      deskKey: String(parsed.deskKey || ""),
-      label: plain(parsed.label || ""),
+      deskKey: optStr(parsed.deskKey, MAX_DESK_KEY),
+      label: plain(optStr(parsed.label, MAX_LABEL)),
       known: parsed.known === true,
       computers: computers,
-      current: parsed.current === null || parsed.current === undefined ? null : String(parsed.current),
+      current: parsed.current === null || parsed.current === undefined ? null : str(parsed.current, MAX_ID),
       monitors: monitors,
       unmapped: unmapped,
-      live: stringMap(parsed.live),
-      hint: String(parsed.hint || "")
+      live: codeMap(parsed.live),
+      hint: plain(optStr(parsed.hint, MAX_HINT))
     }
   } catch (e) {
-    return empty
+    return emptyState("Screen Push couldn't read the desk. Open setup to save it again.")
+  }
+}
+
+// The screens detect found: serial and model from each screen's own EDID, and
+// the input codes it reports. Same rule as the desk: refuse, don't trim.
+function parseDetect(text) {
+  try {
+    var parsed = JSON.parse(text || "")
+    if (!isRecord(parsed)) refuse("not an object")
+    var monitors = list(parsed.monitors, MAX_ITEMS).map(function (m) {
+      if (!isRecord(m)) refuse("bad monitor")
+      return { serial: str(m.serial, MAX_ID), model: plain(optStr(m.model, MAX_LABEL)),
+               inputs: list(m.inputs, MAX_INPUTS).map(function (c) { return str(c, MAX_CODE) }) }
+    })
+    return { monitors: monitors, hint: plain(optStr(parsed.hint, MAX_HINT)) }
+  } catch (e) {
+    return { monitors: [], hint: "Screen Push couldn't read the screens it found." }
   }
 }
 

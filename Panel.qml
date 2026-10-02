@@ -147,6 +147,9 @@ Panel {
     if (!api || typeof api.updateEntryInline !== "function") return false
     var merged = Object.assign({}, settings || {}, changes || {})
     delete merged.id
+    // The manifest declares these as "true"/"false" options, the shape
+    // `omarchy bar set` writes; Engine.prefs reads either form.
+    for (var k in merged) if (typeof merged[k] === "boolean") merged[k] = merged[k] ? "true" : "false"
     return api.updateEntryInline(moduleName, merged)
   }
 
@@ -276,12 +279,6 @@ Panel {
     function toggle(): void { root.toggle() }
     function refresh(): void { root.broadcast("refresh") }
     function setup(): void { root.openSetup() }
-    function send(id: string): string {
-      var known = root.deskState.computers.some(function (c) { return c.id === id })
-      if (!known) return "unknown"
-      root.sendTo(id, "")
-      return "ok"
-    }
   }
 
   // Every string this panel shows comes from the person's own config or from

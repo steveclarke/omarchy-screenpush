@@ -5,6 +5,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "Engine.js" as Engine
 
 Item {
   id: root
@@ -174,7 +175,8 @@ Item {
   // TextField would otherwise write.
   function setHost(computerIndex, text) {
     var next = JSON.parse(JSON.stringify(computers))
-    next[computerIndex].host = text === "" ? null : text
+    // A leading dash would read as an option to ping; no hostname starts with one.
+    next[computerIndex].host = text === "" || text.charAt(0) === "-" ? null : text
     computers = next
   }
 
@@ -229,8 +231,8 @@ Item {
     onStarted: detectOut.reset()
     onExited: function(exitCode) {
       {
-        var found = [], parsedDetect = {}
-        try { parsedDetect = JSON.parse(detectOut.overflowed ? "" : detectOut.text); found = parsedDetect.monitors || [] } catch (e) { found = [] }
+        var parsedDetect = Engine.parseDetect(detectOut.overflowed ? "" : detectOut.text)
+        var found = parsedDetect.monitors
         // Left-to-right names are a guess the person can correct; ddcutil
         // order is not physical order. Two screens are Left and Right, not
         // Left and Middle - that read as a lost third screen.
@@ -239,10 +241,9 @@ Item {
                       : []
         for (var i = 0; i < found.length; i++) {
           found[i].label = positions[i] !== undefined ? positions[i] : ("Screen " + (i + 1))
-          found[i].model = found[i].model || ""
         }
         root.monitors = found
-        root.noScreensHint = found.length === 0 ? String(parsedDetect.hint || "No screens answered.") : ""
+        root.noScreensHint = found.length === 0 ? (parsedDetect.hint || "No screens answered.") : ""
         if (found.length === 0) { root.detecting = false; return }
         stateProc.running = true
       }
@@ -256,12 +257,11 @@ Item {
     onStarted: stateOut.reset()
     onExited: function(exitCode) {
       {
-        var parsed = {}
-        try { parsed = JSON.parse(stateOut.overflowed ? "" : stateOut.text) } catch (e) { parsed = {} }
+        var parsed = Engine.parseState(stateOut.overflowed ? "" : stateOut.text)
 
         if (parsed.known && parsed.computers && parsed.computers.length > 0) {
-          root.computers = parsed.computers
-          root.deskLabel = parsed.label || ""
+          root.computers = JSON.parse(JSON.stringify(parsed.computers))
+          root.deskLabel = parsed.label
           // The saved desk carries the person's own screen names. Build fresh
           // objects rather than mutating the ones detect produced: a property
           // var hands back copies, so an in-place edit can be thrown away.
@@ -287,7 +287,7 @@ Item {
         // whatever every monitor is showing right now IS this computer, so
         // that column is filled in rather than asked about (PRD R8).
         var mine = { id: "this", label: "This computer", host: null, inputs: {} }
-        var live = parsed.live || {}
+        var live = parsed.live
         for (var serial in live) mine.inputs[serial] = live[serial]
         root.computers = [mine]
         root.addComputer()
@@ -315,7 +315,10 @@ Item {
     onExited: function(exitCode) {
       root.saving = false
       if (exitCode === 0) {
-        if (root.host) root.host.saveSettings(root.draftPrefs)
+        if (root.host && !root.host.saveSettings(root.draftPrefs)) {
+          root.sheetError = "The desk is saved, but the bar settings couldn't be. Update Omarchy and try again."
+          return
+        }
         root.reloadOnOpen = true
         root.close()
         return

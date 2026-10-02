@@ -67,8 +67,7 @@ Desk setup has three settings:
 - **Ask before sending to a computer that isn't answering** - on by default.
 
 They are saved, when **Save** is pressed, in this widget's entry in
-`~/.config/omarchy/shell.json`, through the shell's own settings call. The
-same three can be changed with `omarchy bar set`.
+`~/.config/omarchy/shell.json`, through the shell's own settings call.
 
 ### Hotkeys
 
@@ -91,10 +90,10 @@ To open the panel or desk setup from a key:
 
     omarchy plugin remove io.github.steveclarke.screenpush
 
-Your desk file stays in `~/.config/screenpush/`; delete it if you want a
-clean slate. The bar settings sit in `~/.config/omarchy/shell.json` with the
-rest of the bar's layout, which Omarchy manages; Screen Push writes nothing
-else.
+Your desk file stays in `screenpush/` under your config directory
+(`~/.config/screenpush/` by default); delete it if you want a clean slate.
+The bar settings are part of the bar layout in `~/.config/omarchy/shell.json`,
+which Omarchy owns and handles on removal. Screen Push writes nothing else.
 
 ## How it works
 
@@ -123,6 +122,7 @@ resolve to the same directories.
 ## Development
 
     bats test/screenpush.bats      # engine tests, against a fake ddcutil
+    node --test test/engine.test.js # desk-state parsing in Engine.js
     tools/lint-qml *.qml           # QML against the installed shell modules
     omarchy plugin validate .
 
